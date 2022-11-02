@@ -7,6 +7,7 @@ extern crate futures;
 mod tool;
 mod db;
 mod message;
+// mod trace;
 
 use db::pack_storage;
 
