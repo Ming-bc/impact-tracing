@@ -1,7 +1,7 @@
 pub mod messaging {
     use crate::tool::algos::*;
     // use crate::tool:: utils::*;
-    use crate::db::bloom_filter::*;
+    use crate::db::{bloom_filter, pack_storage};
     use crate::base64::decode;
     use serde::{Serialize, Deserialize};
 
@@ -18,7 +18,7 @@ pub mod messaging {
     }
 
     impl MsgPacket {
-        fn build(tag_key: &[u8; 16], message: String) -> MsgPacket {
+        pub fn build(tag_key: &[u8; 16], message: String) -> MsgPacket {
             let msg_tag = tag_gen(&tag_key, &decode(message.clone()).unwrap()[..]);
             MsgPacket {
                 key: *tag_key,
@@ -27,7 +27,7 @@ pub mod messaging {
             }
         }
 
-        fn vrf_tag(&self) -> bool {
+        pub fn vrf_tag(&self) -> bool {
             let tag_hat = tag_gen(&self.key, &decode(self.payload.clone()).unwrap()[..]);
             if tag_hat != self.tag {
                 return false;
@@ -78,10 +78,12 @@ pub mod messaging {
     }
 
     // proc_msg:
-    pub fn proc_msg(bk: &[u8; 16], packet: MsgPacket) -> bool {
-        let store_tag = proc_tag(bk, &packet.tag);
-        let mut conn = connection_redis().ok().unwrap();
-        bf_add(&mut conn, &store_tag).is_ok()
+    pub fn proc_msg(sess: Session, packet: MsgPacket) -> bool {
+        let sid = pack_storage::query_sid(sess).clone();
+        let bk = <&[u8; 16]>::try_from(&decode(sid).unwrap()[..]).unwrap().clone();
+        let store_tag = tag_gen(&bk, &packet.tag);
+        let mut conn = bloom_filter::connect().ok().unwrap();
+        bloom_filter::add(&mut conn, &store_tag).is_ok()
     }
 
     // pub fn rcv_packet(msg_packet: MsgPacket, session: Session) -> bool {
@@ -89,23 +91,24 @@ pub mod messaging {
     // }
 
     // vrf_msg:
-    pub fn vrf_msg(packet: MsgPacket) -> bool {
+    pub fn receive_msg(packet: MsgPacket) -> bool {
         // 1. Decrypts E2EE
         // 2. Compute ^tag
         packet.vrf_tag()
     }
 
     // report_msg:
-    pub fn sub_report(tag_key: &[u8;16], message: String) -> MsgReport {
-        MsgReport { key: *tag_key, payload: message.clone() }
+    pub fn sub_report(tag_key: &[u8;16], message: String, sender: u32, receiver: u32) -> (MsgReport, Session) {
+        let sid = " ";
+        (MsgReport { key: *tag_key, payload: message.clone() }, Session::build(sid.to_string(), sender, receiver))
     }
 
-    pub fn vrf_report(bk: &[u8; 16], report: MsgReport) -> bool {
-        // TODO: remove bk as input, replace to DB.query
+    pub fn vrf_report(sess: Session, report: MsgReport) -> bool {
+        let bk = &decode(pack_storage::query_sid(sess).clone()).unwrap()[..];
         let tag_prime = tag_gen(&report.key, &decode(report.payload.clone()).unwrap()[..]);
-        let tag_hat = tag_gen(bk, &tag_prime);
-        let mut conn = connection_redis().ok().unwrap();
-        bf_exists(&mut conn, &tag_hat).is_ok()
+        let tag_hat = tag_gen(<&[u8; 16]>::try_from(bk).unwrap(), &tag_prime);
+        let mut conn = bloom_filter::connect().ok().unwrap();
+        bloom_filter::exists(&mut conn, &tag_hat)
     }
 
     
@@ -118,12 +121,24 @@ mod tests {
     // use rand::random;
     use crate::message::messaging::*;
     use crate::tool::algos::*;
-    use crate::base64::encode;
+    use crate::base64::{encode, decode};
+    use crate::db::{pack_storage};
 
     // fn init_logger() {
     //     //env_logger::init();
     //     let _ = env_logger::builder().is_test(true).try_init();
     // }
+
+    #[test]
+    fn build_verify_tag() {
+        let message = rand::random::<[u8; 16]>();
+        let msg_str = encode(&message[..]);
+        assert_eq!(message, decode(msg_str.clone()).unwrap()[..],
+            "Encode or decode failed");
+        let tag_key = rand::random::<[u8; 16]>();
+        let packet = MsgPacket::build(&tag_key, msg_str);
+        assert!(receive_msg(packet))
+    }
 
     #[test]
     fn snd_rcv_msg() {
@@ -136,26 +151,24 @@ mod tests {
             key: packet.key,
             tag: tag_gen(&bk, &message),
         };
-        let b = vrf_msg(packet_false);
-        assert!(vrf_msg(packet));
-        assert_ne!(b, true);
+        assert!(receive_msg(packet));
+        assert_ne!(receive_msg(packet_false), true);
     }
 
     #[test]
-    fn new_proc_report_msg() {
-        let bk = rand::random::<[u8; 16]>();
+    fn report_msg() {
+        let snd_id: u32 = 2806396777;
+        let rcv_id: u32 = 259328394;
+        let sid: String = String::from(" ");
+
         let message = rand::random::<[u8; 16]>();
         let msg_str = encode(&message[..]);
         let tag_key = rand::random::<[u8; 16]>();
-        let msg_tag = tag_gen(&tag_key, &message);
-        let packet = MsgPacket {
-            payload: msg_str.clone(),
-            key: tag_key,
-            tag: msg_tag,
-        };
-        assert!(proc_msg(&bk, packet));
-        let report = sub_report(&tag_key, msg_str);
-        assert!(vrf_report(&bk, report));
+        let packet = MsgPacket::build(&tag_key, msg_str);
+        let sess = Session::build(sid, snd_id, rcv_id);
+        assert!(proc_msg(sess, packet), "Proc failed");
+        let (report, sess_sub) = sub_report(&tag_key, encode(&message[..]), snd_id, rcv_id);
+        assert!(vrf_report(sess_sub, report), "Verify failed");
     }
 
 
