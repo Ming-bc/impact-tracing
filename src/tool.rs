@@ -52,6 +52,7 @@ pub mod utils{
 
 pub mod algos{
     use crate::tool::utils::{hash, crprf, encipher, decipher};
+    use crate::db::bloom_filter;
 
     // new_key_gen: generate a ramdom key
     pub fn new_key_gen(bk: &[u8; 16]) -> [u8; 16] {
@@ -85,10 +86,12 @@ pub mod algos{
         processed_tag
     }
 
-    // pub fn tag_exists(key: &[u8; 16], bk: &[u8; 16], message: &[u8]) -> bool{
-    //     let tag = tag_gen(key, message);
-    //     let tag_hat = proc_tag(bk, &tag)
-    // }
+    pub fn tag_exists(key: &[u8; 16], bk: &[u8; 16], message: &[u8]) -> bool{
+        let tag = tag_gen(key, message);
+        let tag_hat = proc_tag(bk, &tag);
+        let mut conn = bloom_filter::connect().ok().unwrap();
+        bloom_filter::exists(&mut conn, &tag_hat)
+    }
 
 }
 

@@ -105,10 +105,8 @@ pub mod messaging {
 
     pub fn vrf_report(sess: Session, report: MsgReport) -> bool {
         let bk = &decode(pack_storage::query_sid(sess).clone()).unwrap()[..];
-        let tag_prime = tag_gen(&report.key, &decode(report.payload.clone()).unwrap()[..]);
-        let tag_hat = proc_tag(<&[u8; 16]>::try_from(bk).unwrap(), &tag_prime);
-        let mut conn = bloom_filter::connect().ok().unwrap();
-        bloom_filter::exists(&mut conn, &tag_hat)
+
+        tag_exists(&report.key, <&[u8; 16]>::try_from(bk).unwrap(), &decode(report.payload.clone()).unwrap()[..])
     }
 
     
