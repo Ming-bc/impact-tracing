@@ -146,7 +146,7 @@ mod tests {
         let receiver = random::<u32>();
         let bytes = rand::random::<[u8; 16]>();
         let sid = encode(&bytes[..]);
-        let ses = Session::build(sid, sender, receiver);
+        let ses = Session::new(sid, sender, receiver);
 
         pack_storage::add(ses).ok().unwrap();
         let mut users = pack_storage::query_users(sender, FwdType::Send);
@@ -164,7 +164,7 @@ mod tests {
                 let bytes = rand::random::<[u8; 16]>();
                 let sid = encode(&bytes[..]);
 
-                let ses = Session::build(sid, *users.get(i).unwrap(), *users.get(j).unwrap());
+                let ses = Session::new(sid, *users.get(i).unwrap(), *users.get(j).unwrap());
                 pack_storage::add(ses).ok().unwrap();
             }
         }

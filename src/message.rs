@@ -3,6 +3,7 @@ pub mod messaging {
     // use crate::tool:: utils::*;
     use crate::db::{bloom_filter, pack_storage};
     use crate::base64::decode;
+    use base64::encode;
     use serde::{Serialize, Deserialize};
 
     pub enum FwdType {
@@ -18,7 +19,7 @@ pub mod messaging {
     }
 
     impl MsgPacket {
-        pub fn build(tag_key: &[u8; 16], message: String) -> MsgPacket {
+        pub fn new(tag_key: &[u8; 16], message: String) -> Self {
             let msg_tag = tag_gen(&tag_key, &decode(message.clone()).unwrap()[..]);
             MsgPacket {
                 key: *tag_key,
@@ -51,7 +52,7 @@ pub mod messaging {
     }
 
     impl Session {
-        pub fn build (sid: String, snd_id: u32, rcv_id: u32) -> Session {
+        pub fn new (sid: String, snd_id: u32, rcv_id: u32) -> Self {
             Session { id: sid, sender: snd_id, receiver: rcv_id }
         }
     }
@@ -59,7 +60,7 @@ pub mod messaging {
     // new_msg:
     pub fn new_msg(bk: &[u8; 16], message: String) -> MsgPacket {
         let tag_key = new_key_gen(bk);
-        MsgPacket::build(&tag_key, message)
+        MsgPacket::new(&tag_key, message)
     }
     // fwd_msg:
     pub fn fwd_msg(key: &[u8; 16], bk: &[u8; 16], message: String, fwd_type: FwdType) -> MsgPacket {
@@ -69,7 +70,7 @@ pub mod messaging {
             FwdType::Send => tag_key = prev_key(key, bk),
             FwdType::Receive => tag_key = next_key(key, bk),
         }
-        MsgPacket::build(&tag_key, message)
+        MsgPacket::new(&tag_key, message)
     }
 
     pub fn send_packet(msg_packet: MsgPacket, session: Session) -> (MsgPacket, Session) {
@@ -81,6 +82,8 @@ pub mod messaging {
     pub fn proc_msg(sess: Session, packet: MsgPacket) -> bool {
         let sid = pack_storage::query_sid(sess).clone();
         let bk = <&[u8; 16]>::try_from(&decode(sid).unwrap()[..]).unwrap().clone();
+println!("Proc bk is {:?}", encode(&bk[..]));
+println!("Proc tag is {:?}", encode(&packet.tag[..]));
         let store_tag = proc_tag(&bk, &packet.tag);
         let mut conn = bloom_filter::connect().ok().unwrap();
         bloom_filter::add(&mut conn, &store_tag).is_ok()
@@ -100,7 +103,7 @@ pub mod messaging {
     // report_msg:
     pub fn sub_report(tag_key: &[u8;16], message: String, sender: u32, receiver: u32) -> (MsgReport, Session) {
         let sid = " ";
-        (MsgReport { key: *tag_key, payload: message.clone() }, Session::build(sid.to_string(), sender, receiver))
+        (MsgReport { key: *tag_key, payload: message.clone() }, Session::new(sid.to_string(), sender, receiver))
     }
 
     pub fn vrf_report(sess: Session, report: MsgReport) -> bool {
@@ -109,6 +112,7 @@ pub mod messaging {
         tag_exists(&report.key, <&[u8; 16]>::try_from(bk).unwrap(), &decode(report.payload.clone()).unwrap()[..])
     }
 
+    
     
 }
 
@@ -134,7 +138,7 @@ mod tests {
         assert_eq!(message, decode(msg_str.clone()).unwrap()[..],
             "Encode or decode failed");
         let tag_key = rand::random::<[u8; 16]>();
-        let packet = MsgPacket::build(&tag_key, msg_str);
+        let packet = MsgPacket::new(&tag_key, msg_str);
         assert!(receive_msg(packet))
     }
 
@@ -162,8 +166,8 @@ mod tests {
         let message = rand::random::<[u8; 16]>();
         let msg_str = encode(&message[..]);
         let tag_key = rand::random::<[u8; 16]>();
-        let packet = MsgPacket::build(&tag_key, msg_str);
-        let sess = Session::build(sid, snd_id, rcv_id);
+        let packet = MsgPacket::new(&tag_key, msg_str);
+        let sess = Session::new(sid, snd_id, rcv_id);
         assert!(proc_msg(sess, packet), "Proc failed");
         let (report, sess_sub) = sub_report(&tag_key, encode(&message[..]), snd_id, rcv_id);
         assert!(vrf_report(sess_sub, report), "Verify failed");
