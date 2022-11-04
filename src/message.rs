@@ -80,10 +80,8 @@ pub mod messaging {
 
     // proc_msg:
     pub fn proc_msg(sess: Session, packet: MsgPacket) -> bool {
-        let sid = pack_storage::query_sid(sess).clone();
+        let sid = pack_storage::query_sid(sess.sender, sess.receiver).clone();
         let bk = <&[u8; 16]>::try_from(&decode(sid).unwrap()[..]).unwrap().clone();
-println!("Proc bk is {:?}", encode(&bk[..]));
-println!("Proc tag is {:?}", encode(&packet.tag[..]));
         let store_tag = proc_tag(&bk, &packet.tag);
         let mut conn = bloom_filter::connect().ok().unwrap();
         bloom_filter::add(&mut conn, &store_tag).is_ok()
@@ -107,7 +105,7 @@ println!("Proc tag is {:?}", encode(&packet.tag[..]));
     }
 
     pub fn vrf_report(sess: Session, report: MsgReport) -> bool {
-        let bk = &decode(pack_storage::query_sid(sess).clone()).unwrap()[..];
+        let bk = &decode(pack_storage::query_sid(sess.sender, sess.receiver).clone()).unwrap()[..];
 
         tag_exists(&report.key, <&[u8; 16]>::try_from(bk).unwrap(), &decode(report.payload.clone()).unwrap()[..])
     }

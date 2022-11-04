@@ -1,9 +1,11 @@
 
 
 pub mod traceback {
+    use std::collections::HashSet;
+
     use hmac::digest::impl_write;
 
-    use crate::message::messaging::{MsgReport, FwdType, MsgPacket, Session};
+    use crate::message::messaging::{MsgReport, FwdType, MsgPacket, Session, fwd_msg};
     use crate::tool::{algos, utils};
     use crate::db::{bloom_filter, pack_storage};
     use crate::base64::{decode, encode};
@@ -49,6 +51,7 @@ pub mod traceback {
                 return TraceData { uid: sess.sender, key:  prev_key};
             }
         }
+        // return uid = 0, when found not one.
         TraceData { uid: 0, key: md.key }
     }
 
@@ -66,22 +69,60 @@ pub mod traceback {
                 result.push(TraceData {uid: sess.receiver, key: next_key});
             }
         }
+        // return empty vector, when found not one.
         result
     }
 
-    // pub fn tracing(report: MsgReport, sess: Session) {
-    //     let mut path: Vec<Edge> = Vec::new();
-    //     let mut snd_set: Vec<TraceData> = Vec::new();
-    //     let mut rcv_set: Vec<TraceData> = Vec::new();
-    //     snd_set.push(TraceData { uid: sess.sender, key: report.key });
+    pub fn tracing(report: MsgReport, snd_start: u32) -> Vec<Edge>{
+        let mut path: Vec<Edge> = Vec::new();
+        let mut current_sender= TraceData { uid: snd_start, key: report.key };
+        let mut rcv_set: Vec<TraceData> = Vec::new();
+        let mut searched_rcv: HashSet<u32> = HashSet::new();
 
-    //     while (snd_set.len() != 0) & (rcv_set.len() != 0) {
-    //         let snd_len = snd_set.len();
-    //         let rcv_len = rcv_set.len();
+        while (current_sender.uid != 0) | (rcv_set.is_empty() == false) {
+            let rcv_len_at_begin = rcv_set.len();
             
-    //         let t_snd_set = 
-    //     }
-    // }
+            // Search the previous node of the sender
+            if current_sender.uid != 0 {
+                let prev_sender = backward_search(report.payload.clone(), TraceData { uid: current_sender.uid, key: current_sender.key });
+                if prev_sender.uid != 0 {
+                    path.push(Edge::new(prev_sender.uid, current_sender.uid.clone()));
+                }
+                // push sender into receiver set
+                rcv_set.push(TraceData { uid: current_sender.uid, key: current_sender.key });
+                current_sender = TraceData::from(prev_sender);
+            }
+            // Search the receivers of the message
+            if rcv_set.is_empty() == false {
+                let mut outside_set: Vec<TraceData> = Vec::new();
+                for out_td in &rcv_set {
+                    let mut inside_set = forward_search(report.payload.clone(), TraceData { uid: out_td.uid, key: out_td.key });
+
+                    for i in 0..inside_set.len() {
+                        let rcv = inside_set.get(i).unwrap();
+                        if searched_rcv.contains(&rcv.uid) {
+                            inside_set.remove(i);
+                        }
+                    }
+
+                    if inside_set.is_empty() == false {
+                        for in_td in & inside_set {
+                            path.push(Edge::new(out_td.uid, in_td.uid))
+                        }
+                        outside_set.extend(inside_set);
+                    }
+                }
+                rcv_set.extend(outside_set);
+            }
+            // pop the receivers that already search
+            let mut prev_rcv_set = rcv_set;
+            rcv_set = prev_rcv_set.split_off(rcv_len_at_begin+1);
+            for user in prev_rcv_set {
+                searched_rcv.insert(user.uid);
+            }
+        }
+        path
+    }
 }
 
 
@@ -91,28 +132,71 @@ mod tests {
     use rand;
     use crate::message::messaging;
     use crate::message::messaging::{FwdType, MsgPacket, Session, MsgReport};
+    use crate::tool::algos;
     use crate::base64;
     use crate::db::pack_storage;
+    use crate::trace::traceback::tracing;
     use super::*;
     use super::traceback::{backward_search, forward_search, TraceData};
     use std::mem::{self, MaybeUninit};
 
-    
-    // Path: U1 -> U2 -> U3 -> U4 -> U5, where U3 is the start point
+    // generate a forward path from Ui to Uj
+    fn fwd_edge_gen(prev_key: [u8; 16], message: String, sender: u32, receiver: u32) {
+        let sess = Session::new(0.to_string(), sender, receiver);
+        let bk = &base64::decode(pack_storage::query_sid(sender, receiver)).unwrap()[..];
+        let packet = messaging::fwd_msg(&prev_key, <&[u8; 16]>::try_from(bk).unwrap(), message, FwdType::Receive);
+        while messaging::proc_msg( sess, packet) != true {
+            panic!("process failed.");
+        }
+    }
+
+    // Path: U1 -> U2 -> U3 -> U4 -> U5, U2 -> U6, U4 -> U7 where U3 is the start point
+    fn mock_path_2(message: String) -> [u8; 16] {
+        let users: Vec<u32> = vec![2806396777, 259328394, 4030527275, 1677240722, 1888975301, 902146735, 4206663226];
+        let mut keys: Vec<[u8;16]> = Vec::new();
+        let mut sessions: Vec<Session> = Vec::new();
+        let mut report_key = MaybeUninit::<[u8; 16]>::uninit();
+
+        // path U1 -> U5
+        for i in 0..4 {
+            // TODO: mock path
+            let t_sender = users.get(i).unwrap();
+            let t_receiver = users.get(i+1).unwrap();
+            sessions.push(Session::new(0.to_string(), *t_sender, *t_receiver));
+
+            let bk = &base64::decode(pack_storage::query_sid(t_sender.clone(), t_receiver.clone()).clone()).unwrap()[..];
+            if i==0 {
+                let packet = messaging::new_msg(<&[u8; 16]>::try_from(bk).unwrap(), message.clone());
+                keys.push(packet.key);
+            } else {
+                let prev_key = *keys.get(i).unwrap();
+                fwd_edge_gen(prev_key, message.clone(), *users.get(i).unwrap(), *users.get(i+1).unwrap());
+                let next_key = algos::next_key(&prev_key, <&[u8; 16]>::try_from(bk).unwrap());
+                keys.push(next_key);
+            }
+            
+            if i == 1 {
+                report_key.write(*keys.get(i).unwrap());
+            }
+        }
+        unsafe {report_key.assume_init()}
+    }
+
+    // Path: U1 -> U2 -> U3 -> U4 -> U5, U2 -> U6, U4 -> U7 where U3 is the start point
     fn mock_path_1(message: String) -> [u8; 16] {
-        let users: Vec<u32> = vec![2806396777, 259328394, 4030527275, 1677240722, 1888975301];
+        let users: Vec<u32> = vec![2806396777, 259328394, 4030527275, 1677240722, 1888975301, 902146735, 4206663226];
         let mut datas: Vec<MsgPacket> = Vec::new();
         let mut sessions: Vec<Session> = Vec::new();
         let mut report_key = MaybeUninit::<[u8; 16]>::uninit();
 
+        // path U1 -> U5
         for i in 0..4 {
             // TODO: mock path
             let sid: String = String::from(" ");
             let sess = Session::new(sid, *users.get(i).unwrap(), *users.get(i+1).unwrap());
             sessions.push(sess);
 
-            let t_sess = Session::new(message.clone(), users.get(i).unwrap().clone(), users.get(i+1).unwrap().clone());
-            let bk = &base64::decode(pack_storage::query_sid(t_sess).clone()).unwrap()[..];
+            let bk = &base64::decode(pack_storage::query_sid(users.get(i).unwrap().clone(), users.get(i+1).unwrap().clone()).clone()).unwrap()[..];
             let packet: MsgPacket;
             if i==0 {
                 packet = messaging::new_msg(<&[u8; 16]>::try_from(bk).unwrap(), message.clone());
@@ -125,10 +209,10 @@ mod tests {
                 report_key.write(datas.get(i).unwrap().key);
             }
 
-let t_sess = sessions.get(i).unwrap();
-let proc_sess = Session::new(t_sess.id.clone(), t_sess.sender, t_sess.receiver);
-let t_data =  datas.get(i).clone().unwrap();
-let proc_data = MsgPacket::new(&t_data.key, t_data.payload.clone());
+let tt_sess = sessions.get(i).unwrap();
+let proc_sess = Session::new(tt_sess.id.clone(), tt_sess.sender, tt_sess.receiver);
+let tt_data =  datas.get(i).clone().unwrap();
+let proc_data = MsgPacket::new(&tt_data.key, tt_data.payload.clone());
 
             while messaging::proc_msg( proc_sess, proc_data) != true {
                 panic!("process failed.");
@@ -159,5 +243,24 @@ let proc_data = MsgPacket::new(&t_data.key, t_data.payload.clone());
         // Search this message from middle node
         let result = forward_search(message, TraceData {uid: *users.get(2).unwrap(), key: report_key});
         assert_eq!(result.get(0).unwrap().uid, *users.get(3).unwrap());
+    }
+
+    #[test]
+    fn test_tracing() {
+        let users: Vec<u32> = vec![2806396777, 259328394, 4030527275, 1677240722, 1888975301];
+        // Generate a mock path, if doesn't exists.
+        let msg_bytes = rand::random::<[u8; 16]>();
+        let message = encode(&msg_bytes[..]);
+        let report_key = mock_path_1(message.clone());
+        // Search this message from middle node
+        let msg_path = tracing(MsgReport { key: report_key, payload: message }, *users.get(2).unwrap());
+        if msg_path.is_empty() {
+            println!("No path");
+        } else {
+            for edge in &msg_path {
+                edge.show();
+            }
+            println!();
+        }
     }
 }

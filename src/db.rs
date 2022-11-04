@@ -28,7 +28,7 @@ pub mod bloom_filter {
 pub mod pack_storage {
     use mongodb::{bson::{doc, Document}, sync::{Client, Collection}, options::FindOptions};
     use crate::message::messaging::{Session, FwdType};
-    use crate::futures::stream::{StreamExt, TryStreamExt};
+    // use crate::futures::stream::{StreamExt, TryStreamExt};
 
     const MONGO_IP: &str = "mongodb://localhost:27017/";
     const DB_NAME: &str = "admin";
@@ -57,20 +57,20 @@ pub mod pack_storage {
         collection.drop(None)
     }
 
-    pub fn add(ses: Session) -> mongodb::error::Result<()>  {
+    pub fn add(sess: Session) -> mongodb::error::Result<()>  {
         let client = Client::with_uri_str(MONGO_IP)?;
         let collection = client.database(DB_NAME).collection::<Session>(COLLECTION_NAME);
         let docs = vec![
-            ses,
+            sess,
         ];
         collection.insert_many(docs, None)?;
         Ok(())
     }
 
-    pub fn query_sid(sess: Session) -> String {
+    pub fn query_sid(sender: u32, receiver: u32) -> String {
         let client = Client::with_uri_str(MONGO_IP).unwrap();
         let collection = client.database(DB_NAME).collection::<Session>(COLLECTION_NAME);
-        let filter = doc! { "sender": sess.sender, "receiver": sess.receiver };
+        let filter = doc! { "sender": sender, "receiver": receiver };
         let cursor = collection.find(filter, None).unwrap();
         let mut sid: String = String::from("value");
         for doc in cursor {
