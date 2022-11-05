@@ -67,7 +67,7 @@ pub mod pack_storage {
         Ok(())
     }
 
-    pub fn query_sid(sender: u32, receiver: u32) -> String {
+    pub fn query_sid(sender: &u32, receiver: &u32) -> String {
         let client = Client::with_uri_str(MONGO_IP).unwrap();
         let collection = client.database(DB_NAME).collection::<Session>(COLLECTION_NAME);
         let filter = doc! { "sender": sender, "receiver": receiver };
@@ -79,7 +79,7 @@ pub mod pack_storage {
         sid
     }
 
-    pub fn query_users(uid: u32, user_type: FwdType) -> Vec<Session> {
+    pub fn query_users(uid: &u32, user_type: FwdType) -> Vec<Session> {
         let client = Client::with_uri_str(MONGO_IP).unwrap();
         let collection = client.database(DB_NAME).collection::<Session>(COLLECTION_NAME);
         
@@ -149,7 +149,7 @@ mod tests {
         let ses = Session::new(sid, sender, receiver);
 
         pack_storage::add(ses).ok().unwrap();
-        let mut users = pack_storage::query_users(sender, FwdType::Send);
+        let mut users = pack_storage::query_users(&sender, FwdType::Send);
         for u in &mut users {
             assert_eq!(receiver, u.receiver);
         }

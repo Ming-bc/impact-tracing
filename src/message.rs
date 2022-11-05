@@ -19,12 +19,12 @@ pub mod messaging {
     }
 
     impl MsgPacket {
-        pub fn new(tag_key: &[u8; 16], message: String) -> Self {
+        pub fn new(tag_key: &[u8; 16], message: &str) -> Self {
             let msg_tag = tag_gen(&tag_key, &decode(message.clone()).unwrap()[..]);
             MsgPacket {
                 key: *tag_key,
                 tag: msg_tag,
-                payload: message,
+                payload: message.to_string(),
             }
         }
 
@@ -44,6 +44,12 @@ pub mod messaging {
         pub payload: String,
     }
 
+    impl MsgReport {
+        pub fn new (report_key: [u8; 16], message: String) -> Self {
+            MsgReport { key: report_key, payload: message }
+        }
+    }
+
     #[derive(Serialize, Deserialize, Debug)]
     pub struct Session {
         pub id: String,
@@ -58,12 +64,12 @@ pub mod messaging {
     }
 
     // new_msg:
-    pub fn new_msg(bk: &[u8; 16], message: String) -> MsgPacket {
+    pub fn new_msg(bk: &[u8; 16], message: &str) -> MsgPacket {
         let tag_key = new_key_gen(bk);
         MsgPacket::new(&tag_key, message)
     }
     // fwd_msg:
-    pub fn fwd_msg(key: &[u8; 16], bk: &[u8; 16], message: String, fwd_type: FwdType) -> MsgPacket {
+    pub fn fwd_msg(key: &[u8; 16], bk: &[u8; 16], message: &str, fwd_type: FwdType) -> MsgPacket {
         let tag_key:[u8; 16];
 
         match fwd_type {
@@ -80,7 +86,7 @@ pub mod messaging {
 
     // proc_msg:
     pub fn proc_msg(sess: Session, packet: MsgPacket) -> bool {
-        let sid = pack_storage::query_sid(sess.sender, sess.receiver).clone();
+        let sid = pack_storage::query_sid(&sess.sender, &sess.receiver).clone();
         let bk = <&[u8; 16]>::try_from(&decode(sid).unwrap()[..]).unwrap().clone();
         let store_tag = proc_tag(&bk, &packet.tag);
         let mut conn = bloom_filter::connect().ok().unwrap();
@@ -99,13 +105,13 @@ pub mod messaging {
     }
 
     // report_msg:
-    pub fn sub_report(tag_key: &[u8;16], message: String, sender: u32, receiver: u32) -> (MsgReport, Session) {
+    pub fn sub_report(tag_key: &[u8;16], message: &str, sender: u32, receiver: u32) -> (MsgReport, Session) {
         let sid = " ";
-        (MsgReport { key: *tag_key, payload: message.clone() }, Session::new(sid.to_string(), sender, receiver))
+        (MsgReport { key: *tag_key, payload: message.to_string()}, Session::new(sid.to_string(), sender, receiver))
     }
 
     pub fn vrf_report(sess: Session, report: MsgReport) -> bool {
-        let bk = &decode(pack_storage::query_sid(sess.sender, sess.receiver).clone()).unwrap()[..];
+        let bk = &decode(pack_storage::query_sid(&sess.sender, &sess.receiver).clone()).unwrap()[..];
 
         tag_exists(&report.key, <&[u8; 16]>::try_from(bk).unwrap(), &decode(report.payload.clone()).unwrap()[..])
     }
@@ -122,7 +128,6 @@ mod tests {
     use crate::message::messaging::*;
     use crate::tool::algos::*;
     use crate::base64::{encode, decode};
-    use crate::db::{pack_storage};
 
     // fn init_logger() {
     //     //env_logger::init();
@@ -136,7 +141,7 @@ mod tests {
         assert_eq!(message, decode(msg_str.clone()).unwrap()[..],
             "Encode or decode failed");
         let tag_key = rand::random::<[u8; 16]>();
-        let packet = MsgPacket::new(&tag_key, msg_str);
+        let packet = MsgPacket::new(&tag_key, &msg_str);
         assert!(receive_msg(packet))
     }
 
@@ -144,7 +149,7 @@ mod tests {
     fn snd_rcv_msg() {
         let bk = rand::random::<[u8; 16]>();
         let message = rand::random::<[u8; 16]>();
-        let packet = new_msg(&bk, encode(&message[..]));
+        let packet = new_msg(&bk, &encode(&message[..]));
         // false result test
         let packet_false = MsgPacket {
             payload: packet.payload.clone(),
@@ -164,10 +169,10 @@ mod tests {
         let message = rand::random::<[u8; 16]>();
         let msg_str = encode(&message[..]);
         let tag_key = rand::random::<[u8; 16]>();
-        let packet = MsgPacket::new(&tag_key, msg_str);
+        let packet = MsgPacket::new(&tag_key, &msg_str);
         let sess = Session::new(sid, snd_id, rcv_id);
         assert!(proc_msg(sess, packet), "Proc failed");
-        let (report, sess_sub) = sub_report(&tag_key, encode(&message[..]), snd_id, rcv_id);
+        let (report, sess_sub) = sub_report(&tag_key, &encode(&message[..]), snd_id, rcv_id);
         assert!(vrf_report(sess_sub, report), "Verify failed");
     }
 

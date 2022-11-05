@@ -99,8 +99,8 @@ pub mod algos{
 mod tests {
     // extern crate test;
     // use rand::random;
-    use crate::tool::utils::{hash, crprf, encipher, decipher};
-    use crate::tool::algos::*;
+    use crate::tool::utils::{encipher, decipher};
+    use crate::tool::algos;
 
     // fn init_logger() {
     //     //env_logger::init();
@@ -121,8 +121,8 @@ mod tests {
     fn next_prev_key() {
         let key = rand::random::<[u8; 16]>();
         let bk = rand::random::<[u8; 16]>();
-        let new_key = next_key(&key, &bk);
-        let old_key = prev_key(&new_key, &bk);
+        let new_key = algos::next_key(&key, &bk);
+        let old_key = algos::prev_key(&new_key, &bk);
         assert_eq!(key, old_key);
     }
 
