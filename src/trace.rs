@@ -1,14 +1,13 @@
 
 
 pub mod traceback {
+    extern crate base64;
+
     use std::collections::HashSet;
-
-    use hmac::digest::impl_write;
-
-    use crate::message::messaging::{MsgReport, FwdType, MsgPacket, Session, fwd_msg};
-    use crate::tool::{algos, utils};
-    use crate::db::{bloom_filter, pack_storage};
-    use crate::base64::{decode, encode};
+    use crate::message::messaging::{MsgReport, FwdType, MsgPacket, Session};
+    use crate::tool::algos;
+    use crate::db::pack_storage;
+    use base64::{decode, encode};
 
     pub struct TraceData {
         pub uid: u32,
@@ -31,17 +30,13 @@ pub mod traceback {
             Edge { sender: snd_id, receiver: rcv_id }
         }
         pub fn show(&self) {
-            print!("{} - {}, ", self.sender, self.receiver);
+            print!("U{} - U{}, ", self.sender, self.receiver);
         }
     }
 
-    // pub fn display_path(users: Vec<u32>, path: Vec<Edge>) {
-
-    // }
-
-    pub fn backward_search(msg: String, md: TraceData) -> TraceData {
+    pub fn backward_search(msg: &str, md: TraceData) -> TraceData {
         let sessions = pack_storage::query_users(&md.uid, FwdType::Receive);
-        let binding = decode(msg.clone()).unwrap();
+        let binding = decode(msg).unwrap();
         let msg_bytes = <&[u8]>::try_from(&binding[..]).unwrap();
         for sess in &sessions {
             let bk = <&[u8; 16]>::try_from(&decode(sess.id.clone()).unwrap()[..]).unwrap().clone();
@@ -55,10 +50,10 @@ pub mod traceback {
         TraceData::new(0, md.key)
     }
 
-    pub fn forward_search(msg: String, md: TraceData) -> Vec<TraceData> {
+    pub fn forward_search(msg: &str, md: TraceData) -> Vec<TraceData> {
         let mut result = Vec::new();
         let sessions = pack_storage::query_users(&md.uid, FwdType::Send);
-        let binding = decode(msg.clone()).unwrap();
+        let binding = decode(msg).unwrap();
         let msg_bytes = <&[u8]>::try_from(&binding[..]).unwrap();
         
         for sess in &sessions {
@@ -73,16 +68,16 @@ pub mod traceback {
         result
     }
 
-    pub fn tracing(report: MsgReport, snd_start: u32) -> Vec<Edge>{
+    pub fn tracing(report: MsgReport, snd_start: &u32) -> Vec<Edge>{
         let mut path: Vec<Edge> = Vec::new();
-        let mut current_sender= TraceData { uid: snd_start, key: report.key };
+        let mut current_sender= TraceData { uid: *snd_start, key: report.key };
         let mut rcv_set: Vec<TraceData> = Vec::new();
         let mut searched_rcv: HashSet<u32> = HashSet::new();
 
         while (current_sender.uid != 0) | (rcv_set.is_empty() == false) {
             // Search the previous node of the sender
             if current_sender.uid != 0 {
-                let prev_sender = backward_search(report.payload.clone(), TraceData { uid: current_sender.uid, key: current_sender.key });
+                let prev_sender = backward_search(&report.payload, TraceData { uid: current_sender.uid, key: current_sender.key });
                 if prev_sender.uid != 0 {
                     path.push(Edge::new(prev_sender.uid, current_sender.uid.clone()));
                 }
@@ -95,7 +90,7 @@ pub mod traceback {
             if rcv_set.is_empty() == false {
                 let mut outside_set: Vec<TraceData> = Vec::new();
                 for out_td in &rcv_set {
-                    let mut inside_set = forward_search(report.payload.clone(), TraceData { uid: out_td.uid, key: out_td.key });
+                    let mut inside_set = forward_search(&report.payload, TraceData { uid: out_td.uid, key: out_td.key });
 
                     for i in 0..inside_set.len() {
                         let rcv = inside_set.get(i).unwrap();
@@ -127,16 +122,22 @@ pub mod traceback {
 
 #[cfg(test)]
 mod tests {
+    extern crate base64;
+
+    use std::panic::UnwindSafe;
+
     use base64::encode;
     use rand;
+    
     use crate::message::messaging;
-    use crate::message::messaging::{FwdType, MsgPacket, Session, MsgReport};
     use crate::tool::algos;
-    use crate::base64;
     use crate::db::pack_storage;
     use crate::trace::traceback;
+    use crate::visualize::display;
+
+    use crate::message::messaging::{FwdType, MsgPacket, Session, MsgReport};
     use super::traceback::{TraceData};
-    use std::mem::{MaybeUninit};
+
 
     #[test]
     fn test_bwd_search() {
@@ -147,39 +148,36 @@ mod tests {
         let message = encode(&msg_bytes[..]);
         let report_key = new_edge_gen(&message, &sender, &receiver).key;
         // Bwd Search
-        let result = traceback::backward_search(message, TraceData::new(receiver, report_key));
+        let result = traceback::backward_search(&message, TraceData::new(receiver, report_key));
         assert_eq!(result.uid, sender);
     }
 
     #[test]
     fn test_fwd_search() {
-        let users: Vec<u32> = vec![2806396777, 259328394, 4030527275, 1677240722, 1888975301];
-        // Generate a mock path, if doesn't exists.
-        let msg_bytes = rand::random::<[u8; 16]>();
-        let message = encode(&msg_bytes[..]);
-        let report_key = new_path_gen(&message, users.clone());
+        let (users, keys, message) = path_cases_1();
+        let report_key = keys.get(1).unwrap();
         // Search this message from middle node
-        let result = traceback::forward_search(message, TraceData::new(*users.get(2).unwrap(), report_key));
+        let result = traceback::forward_search(&message, TraceData::new(*users.get(2).unwrap(), *report_key));
         assert_eq!(result.get(0).unwrap().uid, *users.get(3).unwrap());
     }
 
     #[test]
     fn test_tracing() {
-        let users: Vec<u32> = vec![2806396777, 259328394, 4030527275, 1677240722, 1888975301];
-        // Generate a mock path, if doesn't exists.
-        let msg_bytes = rand::random::<[u8; 16]>();
-        let message = encode(&msg_bytes[..]);
-        let report_key = new_path_gen(&message, users.clone());
-        // Search this message from middle node
-        let msg_path = traceback::tracing(MsgReport::new(report_key, message), *users.get(2).unwrap());
-        if msg_path.is_empty() {
-            println!("No path");
-        } else {
-            for edge in &msg_path {
+        // Path case 1: 1-2-3-4-5
+        {
+            let (users, keys, message) = path_cases_2();
+            let report_key = keys.get(1).unwrap();
+    
+            // Search this message from middle node
+            let msg_path = traceback::tracing(MsgReport::new(*report_key, message), users.get(2).unwrap());
+            assert_eq!(msg_path.is_empty(), false);
+            let refined_path = display::refine_user_id(users, msg_path);
+            for edge in &refined_path {
                 edge.show();
             }
-            println!();
+            println!("");
         }
+        
     }
 
         // generate a new edge from a sender to a receiver
@@ -205,7 +203,7 @@ mod tests {
             }
         }
     
-        fn fwd_path_gen(start_key: &[u8; 16], message: &str, users: Vec<u32>) -> [u8; 16] {
+        fn fwd_path_gen(start_key: &[u8; 16], message: &str, users: Vec<u32>) -> Vec<[u8; 16]> {
             let mut keys: Vec<[u8;16]> = Vec::new();
             let mut sessions: Vec<Session> = Vec::new();
     
@@ -223,17 +221,51 @@ mod tests {
                 keys.push(next_key);
             }
             // TODO: reconstruct new_path_gen
-            *keys.get(1).unwrap()
+            keys
         }
-    
-        // generate a forward path from the source to some receivers
-        fn new_path_gen(message: &str, users: Vec<u32>) -> [u8; 16] {
-            let mut keys: Vec<[u8;16]> = Vec::new();
-            let mut sessions: Vec<Session> = Vec::new();
-            let mut report_key = MaybeUninit::<[u8; 16]>::uninit();
-    
-            let first_packet = new_edge_gen(message, users.get(0).unwrap(), users.get(1).unwrap());
-            fwd_path_gen(&first_packet.key, message, users.clone().split_off(1))
+
+        // Normal tree: 1-2-3-4-5
+        fn path_cases_1() -> (Vec<u32>, Vec<[u8;16]>, String) {
+            let users: Vec<u32> = vec![2806396777, 259328394, 4030527275, 1677240722, 1888975301];
+            let msg_bytes = rand::random::<[u8; 16]>();
+            let message = encode(&msg_bytes[..]);
+
+            // generate the first edge of a path: 1-2
+            let first_packet = new_edge_gen(&message, users.get(0).unwrap(), users.get(1).unwrap());
+            // generate a forward path: 2-3-4-5
+            let mut path_keys = fwd_path_gen(&first_packet.key, &message, users.clone().split_off(1));
+            (users, path_keys, message)
+        }
+
+        // More complex tree: 1-2-3-4-5, 3-6-7, 6-8
+        fn path_cases_2() -> (Vec<u32>, Vec<[u8;16]>, String) {
+            let users: Vec<u32> = vec![2806396777, 259328394, 4030527275, 1677240722, 1888975301, 902146735, 4206663226, 2261102179];
+            // Generate a mock path, if doesn't exists.
+            let msg_bytes = rand::random::<[u8; 16]>();
+            let message = encode(&msg_bytes[..]);
+
+            // Path 0: 1-2
+            let first_packet = new_edge_gen(&message, users.get(0).unwrap(), users.get(1).unwrap());
+
+            // Path 1: 2-3-4-5
+            let users_path_1: Vec<u32> = vec![259328394, 4030527275, 1677240722, 1888975301];
+            let start_key_1 = &first_packet.key;
+            let mut keys_1 = fwd_path_gen(&start_key_1, &message, users_path_1);
+
+            // Path 2: 3-6-7
+            let users_path_2: Vec<u32> = vec![4030527275, 902146735, 4206663226];
+            let start_key_2 = &keys_1.get(1).unwrap();
+            let mut keys_2 = fwd_path_gen(&start_key_2, &message, users_path_2);
+
+            // Path 3: 6-8
+            let users_path_2: Vec<u32> = vec![902146735, 2261102179];
+            let start_key_2 = &keys_2.get(1).unwrap();
+            let mut keys_3 = fwd_path_gen(&start_key_2, &message, users_path_2);
+
+            keys_1.append(&mut keys_2.split_off(1));
+            keys_1.append(&mut keys_3.split_off(1));
+
+            (users, keys_1, message)
         }
 
 }

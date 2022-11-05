@@ -1,9 +1,12 @@
 
 
 pub mod bloom_filter {
+    extern crate redis;
+    extern crate base64;
+
     // fpr: 0.000000005, items: 1000000
-    use crate::redis::Connection;
-    use crate::base64::{encode};
+    use redis::Connection;
+    use base64::encode;
 
     const BF_IP: &str = "redis://localhost:6379/";
 
@@ -103,12 +106,15 @@ pub mod pack_storage {
 
 #[cfg(test)]
 mod tests {
-    use aes::cipher::typenum::False;
+    extern crate base64;
+    extern crate rand;
+    extern crate redis;
+
     use base64::encode;
     // extern crate test;
     use rand::random;
+    use redis::ConnectionLike;
     use crate::db::{bloom_filter, pack_storage};
-    use crate::redis::ConnectionLike;
     use crate::message::messaging::Session;
     use crate::message::messaging::FwdType;
 

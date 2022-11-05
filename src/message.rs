@@ -1,9 +1,10 @@
 pub mod messaging {
+    extern crate base64;
+
     use crate::tool::algos::*;
     // use crate::tool:: utils::*;
     use crate::db::{bloom_filter, pack_storage};
-    use crate::base64::decode;
-    use base64::encode;
+    use base64::decode;
     use serde::{Serialize, Deserialize};
 
     pub enum FwdType {
@@ -123,11 +124,11 @@ pub mod messaging {
 
 #[cfg(test)]
 mod tests {
-    // extern crate test;
+    extern crate base64;
     // use rand::random;
     use crate::message::messaging::*;
     use crate::tool::algos::*;
-    use crate::base64::{encode, decode};
+    use base64::{encode, decode};
 
     // fn init_logger() {
     //     //env_logger::init();
