@@ -171,11 +171,14 @@ mod tests {
             // Search this message from middle node
             let msg_path = traceback::tracing(MsgReport::new(*report_key, message), users.get(2).unwrap());
             assert_eq!(msg_path.is_empty(), false);
-            let refined_path = display::refine_user_id(users, msg_path);
+
+            let (refined_users, refined_path) = display::refine_user_id(users, msg_path);
             for edge in &refined_path {
                 edge.show();
             }
             println!("");
+
+            display::vec_to_dot(refined_users, refined_path);
         }
         
     }
