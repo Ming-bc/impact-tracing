@@ -105,7 +105,7 @@ pub mod pack_storage {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     extern crate base64;
     extern crate rand;
     extern crate redis;
@@ -161,18 +161,32 @@ mod tests {
         }
     }
 
-    // Generate 5:5 sender:receiver pair
-    fn mongo_mock_rows() {
+    fn users_gen_1 () {
         let users: Vec<u32> = vec![2806396777, 259328394, 4030527275, 1677240722, 1888975301, 902146735, 4206663226, 2261102179];
+        mock_rows_full_connect(&users);
+    }
 
-        for i in 0..8 {
-            for j in i+1..8 {
+    // Generate rows that connects all users in the vector
+    pub fn mock_rows_full_connect(users: &Vec<u32>) {
+        for i in 0..users.len() {
+            for j in i+1..users.len() {
                 let bytes = rand::random::<[u8; 16]>();
                 let sid = encode(&bytes[..]);
 
                 let ses = Session::new(sid, *users.get(i).unwrap(), *users.get(j).unwrap());
                 pack_storage::add(ses).ok().unwrap();
             }
+        }
+    }
+
+    // Generate rows that connects users as a line
+    pub fn mock_rows_line(users: &Vec<u32>) {
+        for i in 0..(users.len()-1) {
+            let bytes = rand::random::<[u8; 16]>();
+            let sid = encode(&bytes[..]);
+
+            let ses = Session::new(sid, *users.get(i).unwrap(), *users.get(i+1).unwrap());
+            pack_storage::add(ses).ok().unwrap();
         }
     }
 

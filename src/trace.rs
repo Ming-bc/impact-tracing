@@ -123,17 +123,20 @@ pub mod traceback {
 #[cfg(test)]
 mod tests {
     extern crate base64;
+    extern crate test;
 
     use std::panic::UnwindSafe;
 
     use base64::encode;
     use rand;
+    use test::Bencher;
     
     use crate::message::messaging;
     use crate::tool::algos;
     use crate::db::pack_storage;
     use crate::trace::traceback;
     use crate::visualize::display;
+    use crate::db::tests::mock_rows_line;
 
     use crate::message::messaging::{FwdType, MsgPacket, Session, MsgReport};
     use super::traceback::{TraceData};
@@ -180,95 +183,153 @@ mod tests {
 
             display::vec_to_dot(refined_users, refined_path);
         }
-        
     }
 
-        // generate a new edge from a sender to a receiver
-        pub fn new_edge_gen(message: &str, sender: &u32, receiver: &u32) -> MsgPacket {
+    #[bench]
+    fn bench_bwd_search(b: &mut Bencher) {
+        let sender: u32 = 2806396777;
+        let receiver: u32 = 259328394;
+        let msg_bytes = rand::random::<[u8; 16]>();
+        let message = encode(&msg_bytes[..]);
+        let report_key = new_edge_gen(&message, &sender, &receiver).key;
+        // Bwd Search
+        b.iter(|| traceback::backward_search(&message, TraceData::new(receiver, report_key)));
+    }
+
+    #[bench]
+    fn bench_fwd_search(b: &mut Bencher) {
+        let (users, keys, message) = path_cases_1();
+        let report_key = keys.get(1).unwrap();
+        // Search this message from middle node
+        b.iter(|| traceback::forward_search(&message, TraceData::new(*users.get(2).unwrap(), *report_key)));
+    }
+
+    #[bench]
+    fn test_tracing_in_abitary_path(b: &mut Bencher) {
+        let (sess, key, message) = arbitary_path_gen(1000, 10);
+
+        b.iter(|| traceback::tracing(MsgReport::new(key, message.clone()), &sess.receiver));
+    }
+
+    // generate a new edge from a sender to a receiver
+    pub fn new_edge_gen(message: &str, sender: &u32, receiver: &u32) -> MsgPacket {
+        let bk = &base64::decode(pack_storage::query_sid(&sender, &receiver).clone()).unwrap()[..];
+        let bk_16 = <&[u8; 16]>::try_from(bk).unwrap();
+        let packet = messaging::new_msg(bk_16, message);
+        let sess = Session::new( encode(bk_16), *sender, *receiver);
+        while messaging::proc_msg( sess, MsgPacket::new(&packet.key, message) ) != true {
+            panic!("process failed.");
+        }
+        packet
+    }
+    
+    // generate a forward edge from a sender to a receiver
+    fn fwd_edge_gen(prev_key: [u8; 16], message: &str, sender: &u32, receiver: &u32) {
+        let bk = &base64::decode(pack_storage::query_sid(sender, receiver)).unwrap()[..];
+        let bk_16 = <&[u8; 16]>::try_from(bk).unwrap();
+        let sess = Session::new( encode(bk_16), *sender, *receiver);
+        let packet = messaging::fwd_msg(&prev_key, bk_16, message, FwdType::Receive);
+        while messaging::proc_msg( sess, packet) != true {
+            panic!("process failed.");
+        }
+    }
+
+    fn fwd_path_gen(start_key: &[u8; 16], message: &str, users: Vec<u32>) -> Vec<[u8; 16]> {
+        let mut keys: Vec<[u8;16]> = Vec::new();
+        let mut sessions: Vec<Session> = Vec::new();
+
+        keys.push(*start_key);
+
+        for i in 0..(users.len()-1) {
+            let sender = users.get(i).unwrap();
+            let receiver = users.get(i+1).unwrap();
             let bk = &base64::decode(pack_storage::query_sid(&sender, &receiver).clone()).unwrap()[..];
-            let bk_16 = <&[u8; 16]>::try_from(bk).unwrap();
-            let packet = messaging::new_msg(bk_16, message);
-            let sess = Session::new( encode(bk_16), *sender, *receiver);
-            while messaging::proc_msg( sess, MsgPacket::new(&packet.key, message) ) != true {
-                panic!("process failed.");
+            sessions.push(Session::new(0.to_string(), *sender, *receiver));
+
+            let prev_key = *keys.get(i).unwrap();
+            fwd_edge_gen(prev_key, message, &sender, &receiver);
+            let next_key = algos::next_key(&prev_key, <&[u8; 16]>::try_from(bk).unwrap());
+            keys.push(next_key);
+        }
+        // TODO: reconstruct new_path_gen
+        keys
+    }
+
+    // generate a path
+    fn arbitary_path_gen (length_of_path: u32, num_of_sess_per_user: u32) -> (Session, [u8; 16], String)  {
+        // generate sessions
+        let mut users: Vec<u32> = Vec::new();
+        for i in 0..length_of_path {
+            let u_1 = rand::random::<u32>();
+            users.push(u_1);
+            let mut sess_of_user: Vec<u32> = Vec::new();
+            sess_of_user.push(u_1);
+            for i in 0..num_of_sess_per_user {
+                let u_2 = rand::random::<u32>();
+                sess_of_user.push(u_2);
             }
-            packet
+            mock_rows_line(&sess_of_user);
         }
-    
-        // generate a forward edge from a sender to a receiver
-        fn fwd_edge_gen(prev_key: [u8; 16], message: &str, sender: &u32, receiver: &u32) {
-            let bk = &base64::decode(pack_storage::query_sid(sender, receiver)).unwrap()[..];
-            let bk_16 = <&[u8; 16]>::try_from(bk).unwrap();
-            let sess = Session::new( encode(bk_16), *sender, *receiver);
-            let packet = messaging::fwd_msg(&prev_key, bk_16, message, FwdType::Receive);
-            while messaging::proc_msg( sess, packet) != true {
-                panic!("process failed.");
-            }
-        }
-    
-        fn fwd_path_gen(start_key: &[u8; 16], message: &str, users: Vec<u32>) -> Vec<[u8; 16]> {
-            let mut keys: Vec<[u8;16]> = Vec::new();
-            let mut sessions: Vec<Session> = Vec::new();
-    
-            keys.push(*start_key);
-    
-            for i in 0..(users.len()-1) {
-                let sender = users.get(i).unwrap();
-                let receiver = users.get(i+1).unwrap();
-                let bk = &base64::decode(pack_storage::query_sid(&sender, &receiver).clone()).unwrap()[..];
-                sessions.push(Session::new(0.to_string(), *sender, *receiver));
-    
-                let prev_key = *keys.get(i).unwrap();
-                fwd_edge_gen(prev_key, message, &sender, &receiver);
-                let next_key = algos::next_key(&prev_key, <&[u8; 16]>::try_from(bk).unwrap());
-                keys.push(next_key);
-            }
-            // TODO: reconstruct new_path_gen
-            keys
-        }
+        mock_rows_line(&users);
 
-        // Normal tree: 1-2-3-4-5
-        fn path_cases_1() -> (Vec<u32>, Vec<[u8;16]>, String) {
-            let users: Vec<u32> = vec![2806396777, 259328394, 4030527275, 1677240722, 1888975301];
-            let msg_bytes = rand::random::<[u8; 16]>();
-            let message = encode(&msg_bytes[..]);
+        // generate forward path
+        let msg_bytes = rand::random::<[u8; 16]>();
+        let message = encode(&msg_bytes[..]);
 
-            // generate the first edge of a path: 1-2
-            let first_packet = new_edge_gen(&message, users.get(0).unwrap(), users.get(1).unwrap());
-            // generate a forward path: 2-3-4-5
-            let mut path_keys = fwd_path_gen(&first_packet.key, &message, users.clone().split_off(1));
-            (users, path_keys, message)
-        }
+        let first_packet = new_edge_gen(&message, users.get(0).unwrap(), users.get(1).unwrap());
+        let mut path_keys = fwd_path_gen(&first_packet.key, &message, users.clone().split_off(1));
 
-        // More complex tree: 1-2-3-4-5, 3-6-7, 6-8
-        fn path_cases_2() -> (Vec<u32>, Vec<[u8;16]>, String) {
-            let users: Vec<u32> = vec![2806396777, 259328394, 4030527275, 1677240722, 1888975301, 902146735, 4206663226, 2261102179];
-            // Generate a mock path, if doesn't exists.
-            let msg_bytes = rand::random::<[u8; 16]>();
-            let message = encode(&msg_bytes[..]);
+        // return the last session, key and message
+        let report_key = path_keys.pop().unwrap();
+        let receiver = users.pop().unwrap();
+        let sender = users.pop().unwrap();
+        let report_sess = Session::new(0.to_string(), sender, receiver);
+        
+        (report_sess, report_key, message)
+    }
 
-            // Path 0: 1-2
-            let first_packet = new_edge_gen(&message, users.get(0).unwrap(), users.get(1).unwrap());
+    // Normal tree: 1-2-3-4-5
+    fn path_cases_1() -> (Vec<u32>, Vec<[u8;16]>, String) {
+        let users: Vec<u32> = vec![2806396777, 259328394, 4030527275, 1677240722, 1888975301];
+        let msg_bytes = rand::random::<[u8; 16]>();
+        let message = encode(&msg_bytes[..]);
 
-            // Path 1: 2-3-4-5
-            let users_path_1: Vec<u32> = vec![259328394, 4030527275, 1677240722, 1888975301];
-            let start_key_1 = &first_packet.key;
-            let mut keys_1 = fwd_path_gen(&start_key_1, &message, users_path_1);
+        // generate the first edge of a path: 1-2
+        let first_packet = new_edge_gen(&message, users.get(0).unwrap(), users.get(1).unwrap());
+        // generate a forward path: 2-3-4-5
+        let mut path_keys = fwd_path_gen(&first_packet.key, &message, users.clone().split_off(1));
+        (users, path_keys, message)
+    }
 
-            // Path 2: 3-6-7
-            let users_path_2: Vec<u32> = vec![4030527275, 902146735, 4206663226];
-            let start_key_2 = &keys_1.get(1).unwrap();
-            let mut keys_2 = fwd_path_gen(&start_key_2, &message, users_path_2);
+    // More complex tree: 1-2-3-4-5, 3-6-7, 6-8
+    fn path_cases_2() -> (Vec<u32>, Vec<[u8;16]>, String) {
+        let users: Vec<u32> = vec![2806396777, 259328394, 4030527275, 1677240722, 1888975301, 902146735, 4206663226, 2261102179];
+        // Generate a mock path, if doesn't exists.
+        let msg_bytes = rand::random::<[u8; 16]>();
+        let message = encode(&msg_bytes[..]);
 
-            // Path 3: 6-8
-            let users_path_2: Vec<u32> = vec![902146735, 2261102179];
-            let start_key_2 = &keys_2.get(1).unwrap();
-            let mut keys_3 = fwd_path_gen(&start_key_2, &message, users_path_2);
+        // Path 0: 1-2
+        let first_packet = new_edge_gen(&message, users.get(0).unwrap(), users.get(1).unwrap());
 
-            keys_1.append(&mut keys_2.split_off(1));
-            keys_1.append(&mut keys_3.split_off(1));
+        // Path 1: 2-3-4-5
+        let users_path_1: Vec<u32> = vec![259328394, 4030527275, 1677240722, 1888975301];
+        let start_key_1 = &first_packet.key;
+        let mut keys_1 = fwd_path_gen(&start_key_1, &message, users_path_1);
 
-            (users, keys_1, message)
-        }
+        // Path 2: 3-6-7
+        let users_path_2: Vec<u32> = vec![4030527275, 902146735, 4206663226];
+        let start_key_2 = &keys_1.get(1).unwrap();
+        let mut keys_2 = fwd_path_gen(&start_key_2, &message, users_path_2);
+
+        // Path 3: 6-8
+        let users_path_2: Vec<u32> = vec![902146735, 2261102179];
+        let start_key_2 = &keys_2.get(1).unwrap();
+        let mut keys_3 = fwd_path_gen(&start_key_2, &message, users_path_2);
+
+        keys_1.append(&mut keys_2.split_off(1));
+        keys_1.append(&mut keys_3.split_off(1));
+
+        (users, keys_1, message)
+    }
 
 }

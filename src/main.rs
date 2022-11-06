@@ -1,3 +1,5 @@
+#![feature(test)]
+
 mod tool;
 mod db;
 mod message;
