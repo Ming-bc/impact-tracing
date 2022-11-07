@@ -3,7 +3,7 @@ pub mod messaging {
 
     use crate::tool::algos::*;
     // use crate::tool:: utils::*;
-    use crate::db::{bloom_filter, pack_storage};
+    use crate::db::{bloom_filter, redis_pack};
     use base64::decode;
     use serde::{Serialize, Deserialize};
 
@@ -87,11 +87,10 @@ pub mod messaging {
 
     // proc_msg:
     pub fn proc_msg(sess: Session, packet: MsgPacket) -> bool {
-        let sid = pack_storage::query_sid(&sess.sender, &sess.receiver).clone();
+        let sid = redis_pack::query_sid(&sess.sender, &sess.receiver).clone();
         let bk = <&[u8; 16]>::try_from(&decode(sid).unwrap()[..]).unwrap().clone();
         let store_tag = proc_tag(&bk, &packet.tag);
-        let mut conn = bloom_filter::connect().ok().unwrap();
-        bloom_filter::add(&mut conn, &store_tag).is_ok()
+        bloom_filter::add(&store_tag).is_ok()
     }
 
     // pub fn rcv_packet(msg_packet: MsgPacket, session: Session) -> bool {
@@ -112,7 +111,7 @@ pub mod messaging {
     }
 
     pub fn vrf_report(sess: Session, report: MsgReport) -> bool {
-        let bk = &decode(pack_storage::query_sid(&sess.sender, &sess.receiver).clone()).unwrap()[..];
+        let bk = &decode(redis_pack::query_sid(&sess.sender, &sess.receiver).clone()).unwrap()[..];
 
         tag_exists(&report.key, <&[u8; 16]>::try_from(bk).unwrap(), &decode(report.payload.clone()).unwrap()[..])
     }
@@ -125,10 +124,13 @@ pub mod messaging {
 #[cfg(test)]
 mod tests {
     extern crate base64;
+    extern crate test;
     // use rand::random;
+
+    use base64::{encode, decode};
+    use test::Bencher;
     use crate::message::messaging::*;
     use crate::tool::algos::*;
-    use base64::{encode, decode};
 
     // fn init_logger() {
     //     //env_logger::init();
@@ -165,17 +167,55 @@ mod tests {
     fn report_msg() {
         let snd_id: u32 = 2806396777;
         let rcv_id: u32 = 259328394;
-        let sid: String = String::from(" ");
 
         let message = rand::random::<[u8; 16]>();
         let msg_str = encode(&message[..]);
         let tag_key = rand::random::<[u8; 16]>();
         let packet = MsgPacket::new(&tag_key, &msg_str);
-        let sess = Session::new(sid, snd_id, rcv_id);
+        let sess = Session::new(0.to_string(), snd_id, rcv_id);
         assert!(proc_msg(sess, packet), "Proc failed");
         let (report, sess_sub) = sub_report(&tag_key, &encode(&message[..]), snd_id, rcv_id);
         assert!(vrf_report(sess_sub, report), "Verify failed");
     }
 
+    #[bench]
+    fn bench_new_message(b: &mut Bencher) {
+        let bk = rand::random::<[u8; 16]>();
+        let message = rand::random::<[u8; 16]>();
+
+        b.iter(|| new_msg(&bk, &encode(&message[..])));
+    }
+
+    #[bench]
+    fn bench_forward_message(b: &mut Bencher) {
+        let bk = rand::random::<[u8; 16]>();
+        let key = rand::random::<[u8; 16]>();
+        let message = rand::random::<[u8; 16]>();
+        let msg_str = encode(&message[..]);
+        
+        b.iter(||fwd_msg(&key, &bk, &msg_str, FwdType::Receive));
+    }
+
+    #[bench]
+    fn bench_process_message(b: &mut Bencher) {
+        let snd_id: u32 = 2806396777;
+        let rcv_id: u32 = 259328394;
+
+        let message = rand::random::<[u8; 16]>();
+        let msg_str = encode(&message[..]);
+        let tag_key = rand::random::<[u8; 16]>();
+
+        b.iter(|| proc_msg(Session::new(0.to_string(), snd_id, rcv_id), MsgPacket::new(&tag_key, &msg_str)));
+    }
+
+    #[bench]
+    fn bench_receive_message(b: &mut Bencher) {
+        let message = rand::random::<[u8; 16]>();
+        let msg_str = encode(&message[..]);
+        let tag_key = rand::random::<[u8; 16]>();
+        let packet = MsgPacket::new(&tag_key, &msg_str);
+
+        b.iter(||receive_msg(MsgPacket { key: packet.key, tag: packet.tag, payload: msg_str.clone() }));
+    }
 
 }

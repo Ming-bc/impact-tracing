@@ -90,7 +90,7 @@ pub mod algos{
         let tag = tag_gen(key, message);
         let tag_hat = proc_tag(bk, &tag);
         let mut conn = bloom_filter::connect().ok().unwrap();
-        bloom_filter::exists(&mut conn, &tag_hat)
+        bloom_filter::exists(&tag_hat)
     }
 
 }

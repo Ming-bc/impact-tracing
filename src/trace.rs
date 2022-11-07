@@ -6,7 +6,7 @@ pub mod traceback {
     use std::collections::HashSet;
     use crate::message::messaging::{MsgReport, FwdType, MsgPacket, Session};
     use crate::tool::algos;
-    use crate::db::pack_storage;
+    use crate::db::redis_pack;
     use base64::{decode, encode};
 
     pub struct TraceData {
@@ -35,7 +35,7 @@ pub mod traceback {
     }
 
     pub fn backward_search(msg: &str, md: TraceData) -> TraceData {
-        let sessions = pack_storage::query_users(&md.uid, FwdType::Receive);
+        let sessions = redis_pack::query_users(&md.uid, FwdType::Receive);
         let binding = decode(msg).unwrap();
         let msg_bytes = <&[u8]>::try_from(&binding[..]).unwrap();
         for sess in &sessions {
@@ -52,7 +52,7 @@ pub mod traceback {
 
     pub fn forward_search(msg: &str, md: TraceData) -> Vec<TraceData> {
         let mut result = Vec::new();
-        let sessions = pack_storage::query_users(&md.uid, FwdType::Send);
+        let sessions = redis_pack::query_users(&md.uid, FwdType::Send);
         let binding = decode(msg).unwrap();
         let msg_bytes = <&[u8]>::try_from(&binding[..]).unwrap();
         
@@ -133,13 +133,14 @@ mod tests {
     
     use crate::message::messaging;
     use crate::tool::algos;
-    use crate::db::pack_storage;
+    use crate::db::redis_pack;
     use crate::trace::traceback;
     use crate::visualize::display;
     use crate::db::tests::mock_rows_line;
 
     use crate::message::messaging::{FwdType, MsgPacket, Session, MsgReport};
     use super::traceback::{TraceData};
+    use std::time::{SystemTime, UNIX_EPOCH};
 
 
     #[test]
@@ -205,15 +206,28 @@ mod tests {
     }
 
     #[bench]
-    fn test_tracing_in_abitary_path(b: &mut Bencher) {
+    fn bench_tracing_in_abitary_path(b: &mut Bencher) {
         let (sess, key, message) = arbitary_path_gen(1000, 10);
 
         b.iter(|| traceback::tracing(MsgReport::new(key, message.clone()), &sess.receiver));
     }
 
+    #[test]
+    fn test_tracing_in_abitary_path() {
+
+        let (sess, key, message) = arbitary_path_gen(1000, 10);
+
+let trace_start = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+        traceback::tracing(MsgReport::new(key, message.clone()), &sess.receiver);
+let trace_end = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+
+println!("{:?}", trace_start);
+println!("{:?}", trace_end);
+    }
+
     // generate a new edge from a sender to a receiver
     pub fn new_edge_gen(message: &str, sender: &u32, receiver: &u32) -> MsgPacket {
-        let bk = &base64::decode(pack_storage::query_sid(&sender, &receiver).clone()).unwrap()[..];
+        let bk = &base64::decode(redis_pack::query_sid(&sender, &receiver).clone()).unwrap()[..];
         let bk_16 = <&[u8; 16]>::try_from(bk).unwrap();
         let packet = messaging::new_msg(bk_16, message);
         let sess = Session::new( encode(bk_16), *sender, *receiver);
@@ -225,7 +239,7 @@ mod tests {
     
     // generate a forward edge from a sender to a receiver
     fn fwd_edge_gen(prev_key: [u8; 16], message: &str, sender: &u32, receiver: &u32) {
-        let bk = &base64::decode(pack_storage::query_sid(sender, receiver)).unwrap()[..];
+        let bk = &base64::decode(redis_pack::query_sid(sender, receiver)).unwrap()[..];
         let bk_16 = <&[u8; 16]>::try_from(bk).unwrap();
         let sess = Session::new( encode(bk_16), *sender, *receiver);
         let packet = messaging::fwd_msg(&prev_key, bk_16, message, FwdType::Receive);
@@ -243,7 +257,7 @@ mod tests {
         for i in 0..(users.len()-1) {
             let sender = users.get(i).unwrap();
             let receiver = users.get(i+1).unwrap();
-            let bk = &base64::decode(pack_storage::query_sid(&sender, &receiver).clone()).unwrap()[..];
+            let bk = &base64::decode(redis_pack::query_sid(&sender, &receiver).clone()).unwrap()[..];
             sessions.push(Session::new(0.to_string(), *sender, *receiver));
 
             let prev_key = *keys.get(i).unwrap();
