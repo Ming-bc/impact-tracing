@@ -5,9 +5,10 @@ pub mod traceback {
 
     use std::collections::HashSet;
     use crate::message::messaging::{MsgReport, FwdType, MsgPacket, Session};
-    use crate::tool::algos;
-    use crate::db::redis_pack;
+    use crate::tool::algos::{self, store_tag_gen};
+    use crate::db::{redis_pack, bloom_filter};
     use base64::{decode, encode};
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     pub struct TraceData {
         pub uid: u32,
@@ -38,10 +39,21 @@ pub mod traceback {
         let sessions = redis_pack::query_users(&md.uid, FwdType::Receive);
         let binding = decode(msg).unwrap();
         let msg_bytes = <&[u8]>::try_from(&binding[..]).unwrap();
+
+        let mut tags_tbt: Vec<String> = Vec::new();
         for sess in &sessions {
             let bk = <&[u8; 16]>::try_from(&decode(sess.id.clone()).unwrap()[..]).unwrap().clone();
-            let b = algos::tag_exists(&md.key, &bk, msg_bytes);
-            while b == true {
+            let tag_bytes = store_tag_gen(&sess.sender, &md.key, &bk, msg_bytes);
+
+            tags_tbt.push(encode(&tag_bytes[..]));
+        }
+
+        let bf_result = bloom_filter::mexists(&tags_tbt);
+
+        for i in 0..bf_result.len() {
+            if *bf_result.get(i).unwrap() == true {
+                let sess = sessions.get(i).unwrap();
+                let bk = <&[u8; 16]>::try_from(&decode(sess.id.clone()).unwrap()[..]).unwrap().clone();
                 let prev_key = algos::prev_key(&md.key, &bk);
                 return TraceData::new(sess.sender, prev_key);
             }
@@ -55,15 +67,29 @@ pub mod traceback {
         let sessions = redis_pack::query_users(&md.uid, FwdType::Send);
         let binding = decode(msg).unwrap();
         let msg_bytes = <&[u8]>::try_from(&binding[..]).unwrap();
-        
+
+        let mut tags_tbt: Vec<String> = Vec::new();
+        let mut next_key_set: Vec<[u8; 16]> = Vec::new();
+
         for sess in &sessions {
             let bk = <&[u8; 16]>::try_from(&decode(sess.id.clone()).unwrap()[..]).unwrap().clone();
             let next_key = algos::next_key(&md.key, &bk);
-            let b = algos::tag_exists(&next_key, &bk, msg_bytes);
-            if b == true {
-                result.push(TraceData {uid: sess.receiver, key: next_key});
+            let tag = store_tag_gen(&sess.sender, &next_key, &bk, msg_bytes);
+            let tag_str = encode(&tag[..]);
+
+            next_key_set.push(next_key);
+            tags_tbt.push(tag_str);
+        }
+        
+        let bf_result = bloom_filter::mexists(&tags_tbt);
+        for i in 0..bf_result.len() {
+            if *bf_result.get(i).unwrap() == true {
+                let sess = sessions.get(i).unwrap();
+                let next_key = next_key_set.get(i).unwrap();
+                result.push(TraceData {uid: sess.receiver, key: *next_key})
             }
         }
+
         // return empty vector, when found not one.
         result
     }
@@ -91,7 +117,6 @@ pub mod traceback {
                 let mut outside_set: Vec<TraceData> = Vec::new();
                 for out_td in &rcv_set {
                     let mut inside_set = forward_search(&report.payload, TraceData { uid: out_td.uid, key: out_td.key });
-
                     for i in 0..inside_set.len() {
                         let rcv = inside_set.get(i).unwrap();
                         if searched_rcv.contains(&rcv.uid) {
@@ -136,7 +161,7 @@ mod tests {
     use crate::db::redis_pack;
     use crate::trace::traceback;
     use crate::visualize::display;
-    use crate::db::tests::mock_rows_line;
+    use crate::db::tests::{mock_rows_line, mock_rows_star, mock_rows_full_connect};
 
     use crate::message::messaging::{FwdType, MsgPacket, Session, MsgReport};
     use super::traceback::{TraceData};
@@ -146,14 +171,20 @@ mod tests {
     #[test]
     fn test_bwd_search() {
         // Generate a mock edge at first
+        let users: Vec<u32> = vec![2806396777, 259328394];
         let sender: u32 = 2806396777;
         let receiver: u32 = 259328394;
+        mock_rows_full_connect(&users);
+
         let msg_bytes = rand::random::<[u8; 16]>();
         let message = encode(&msg_bytes[..]);
         let report_key = new_edge_gen(&message, &sender, &receiver).key;
         // Bwd Search
         let result = traceback::backward_search(&message, TraceData::new(receiver, report_key));
         assert_eq!(result.uid, sender);
+
+        // let mut conn = redis_pack::connect().unwrap();
+        // let _: () = redis::cmd("FLUSHDB").query(&mut conn).unwrap();
     }
 
     #[test]
@@ -163,6 +194,9 @@ mod tests {
         // Search this message from middle node
         let result = traceback::forward_search(&message, TraceData::new(*users.get(2).unwrap(), *report_key));
         assert_eq!(result.get(0).unwrap().uid, *users.get(3).unwrap());
+
+        // let mut conn = redis_pack::connect().unwrap();
+        // let _: () = redis::cmd("FLUSHDB").query(&mut conn).unwrap();
     }
 
     #[test]
@@ -184,17 +218,43 @@ mod tests {
 
             display::vec_to_dot(refined_users, refined_path);
         }
+
+        // let mut conn = redis_pack::connect().unwrap();
+        // let _: () = redis::cmd("FLUSHDB").query(&mut conn).unwrap();
+    }
+
+    #[test]
+    fn test_tracing_in_abitary_path() {
+        let path_length: u32 = 1000;
+        let branch_factor: u32 = 10;
+        let (sess, key, message) = arbitary_path_gen(path_length, branch_factor);
+
+let trace_start = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+        let path = traceback::tracing(MsgReport::new(key, message.clone()), &sess.receiver);
+let trace_end = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+
+println!("Runtime: {:?}", trace_end - trace_start);
+        let trace_length: usize = path.len();
+        assert_eq!(trace_length as u32, path_length - 1);
+        let mut conn = redis_pack::connect().unwrap();
+        let _: () = redis::cmd("FLUSHDB").query(&mut conn).unwrap();
     }
 
     #[bench]
     fn bench_bwd_search(b: &mut Bencher) {
+        let users: Vec<u32> = vec![2806396777, 259328394];
         let sender: u32 = 2806396777;
         let receiver: u32 = 259328394;
+        mock_rows_full_connect(&users);
+
         let msg_bytes = rand::random::<[u8; 16]>();
         let message = encode(&msg_bytes[..]);
         let report_key = new_edge_gen(&message, &sender, &receiver).key;
         // Bwd Search
         b.iter(|| traceback::backward_search(&message, TraceData::new(receiver, report_key)));
+
+        // let mut conn = redis_pack::connect().unwrap();
+        // let _: () = redis::cmd("FLUSHDB").query(&mut conn).unwrap();
     }
 
     #[bench]
@@ -207,22 +267,14 @@ mod tests {
 
     #[bench]
     fn bench_tracing_in_abitary_path(b: &mut Bencher) {
-        let (sess, key, message) = arbitary_path_gen(1000, 10);
+        let path_length: u32 = 1000;
+        let branch_factor: u32 = 10;
+        let (sess, key, message) = arbitary_path_gen(path_length, branch_factor);
 
         b.iter(|| traceback::tracing(MsgReport::new(key, message.clone()), &sess.receiver));
-    }
 
-    #[test]
-    fn test_tracing_in_abitary_path() {
-
-        let (sess, key, message) = arbitary_path_gen(1000, 10);
-
-let trace_start = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
-        traceback::tracing(MsgReport::new(key, message.clone()), &sess.receiver);
-let trace_end = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
-
-println!("{:?}", trace_start);
-println!("{:?}", trace_end);
+        let mut conn = redis_pack::connect().unwrap();
+        let _: () = redis::cmd("FLUSHDB").query(&mut conn).unwrap();
     }
 
     // generate a new edge from a sender to a receiver
@@ -278,11 +330,11 @@ println!("{:?}", trace_end);
             users.push(u_1);
             let mut sess_of_user: Vec<u32> = Vec::new();
             sess_of_user.push(u_1);
-            for i in 0..num_of_sess_per_user {
+            for j in 0..num_of_sess_per_user {
                 let u_2 = rand::random::<u32>();
                 sess_of_user.push(u_2);
             }
-            mock_rows_line(&sess_of_user);
+            mock_rows_star(&sess_of_user);
         }
         mock_rows_line(&users);
 
@@ -308,6 +360,8 @@ println!("{:?}", trace_end);
         let msg_bytes = rand::random::<[u8; 16]>();
         let message = encode(&msg_bytes[..]);
 
+        mock_rows_full_connect(&users);
+
         // generate the first edge of a path: 1-2
         let first_packet = new_edge_gen(&message, users.get(0).unwrap(), users.get(1).unwrap());
         // generate a forward path: 2-3-4-5
@@ -321,6 +375,7 @@ println!("{:?}", trace_end);
         // Generate a mock path, if doesn't exists.
         let msg_bytes = rand::random::<[u8; 16]>();
         let message = encode(&msg_bytes[..]);
+        mock_rows_full_connect(&users);
 
         // Path 0: 1-2
         let first_packet = new_edge_gen(&message, users.get(0).unwrap(), users.get(1).unwrap());

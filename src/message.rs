@@ -89,7 +89,7 @@ pub mod messaging {
     pub fn proc_msg(sess: Session, packet: MsgPacket) -> bool {
         let sid = redis_pack::query_sid(&sess.sender, &sess.receiver).clone();
         let bk = <&[u8; 16]>::try_from(&decode(sid).unwrap()[..]).unwrap().clone();
-        let store_tag = proc_tag(&bk, &packet.tag);
+        let store_tag = proc_tag(&sess.sender, &bk, &packet.tag);
         bloom_filter::add(&store_tag).is_ok()
     }
 
@@ -113,7 +113,7 @@ pub mod messaging {
     pub fn vrf_report(sess: Session, report: MsgReport) -> bool {
         let bk = &decode(redis_pack::query_sid(&sess.sender, &sess.receiver).clone()).unwrap()[..];
 
-        tag_exists(&report.key, <&[u8; 16]>::try_from(bk).unwrap(), &decode(report.payload.clone()).unwrap()[..])
+        tag_exists(&sess.sender, &report.key, <&[u8; 16]>::try_from(bk).unwrap(), &decode(report.payload.clone()).unwrap()[..])
     }
 
     

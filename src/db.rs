@@ -11,6 +11,7 @@ pub mod bloom_filter {
     use lazy_static::lazy_static;
 
     const BF_IP: &str = "redis://localhost:6379/";
+    const BF_NAME: &str = "filter_1";
 
     lazy_static! {
         pub static ref BLOOM: redis::Client = create_bloom_filter_client();
@@ -27,14 +28,25 @@ pub mod bloom_filter {
     pub fn add(bytes: &[u8; 32]) -> redis::RedisResult<()> {
         let mut conn = BLOOM.get_connection().unwrap();
         let msg = encode(&bytes[..]);
-        let _ : () = redis::cmd("bf.add").arg("newFilter").arg(msg).query(&mut conn)?;
+        let _ : () = redis::cmd("bf.add").arg(BF_NAME).arg(msg).query(&mut conn)?;
+        Ok(())
+    }
+
+    pub fn madd(keys: &Vec<String>) -> redis::RedisResult<()> {
+        let mut conn = BLOOM.get_connection().unwrap();
+        let _ : () = redis::cmd("bf.madd").arg(BF_NAME).arg(keys).query(&mut conn)?;
         Ok(())
     }
     
     pub fn exists(bytes: &[u8; 32]) -> bool {
         let mut conn = BLOOM.get_connection().unwrap();
         let msg = encode(&bytes[..]);
-        redis::cmd("bf.exists").arg("newFilter").arg(msg).query(&mut conn).unwrap()
+        redis::cmd("bf.exists").arg(BF_NAME).arg(msg).query(&mut conn).unwrap()
+    }
+
+    pub fn mexists(keys: &Vec<String>) -> Vec<bool> {
+        let mut conn = BLOOM.get_connection().unwrap();
+        redis::cmd("bf.mexists").arg(BF_NAME).arg(keys).query(&mut conn).unwrap()
     }
 }
 
@@ -78,7 +90,7 @@ pub mod redis_pack {
     pub fn query_users(uid: &u32, fwd_type: FwdType) -> Vec<Session> {    
         let mut conn = BLOOM.get_connection().unwrap();    
         let users: Vec<String> = conn.hgetall(*uid).unwrap();
-        
+        // TODO: optimize
         let mut sessions: Vec<Session> = Vec::new();
         for i in 0..(users.len()/2) {
             let sid = users.get(2*i+1).unwrap();
@@ -112,6 +124,7 @@ pub mod tests {
     use base64::encode;
     // extern crate test;
     use rand::random;
+    use serde::de::value;
     use test::Bencher;
     use redis::ConnectionLike;
     use crate::db::{bloom_filter, redis_pack};
@@ -146,6 +159,19 @@ pub mod tests {
     }
 
     #[test]
+    fn bf_madd_mexists() {
+        let mut values: Vec<String> = Vec::new();
+        for i in 0..5 {
+            let bytes = rand::random::<[u8; 32]>();
+            let key = encode(&bytes[..]);
+            values.push(key);
+        }
+        assert!(bloom_filter::madd(&values).is_ok());
+        bloom_filter::mexists(&values);
+    }
+
+
+    #[test]
     fn redis_add_query() {
         let sender = random::<u32>();
         let receiver = random::<u32>();
@@ -168,7 +194,32 @@ pub mod tests {
     }
 
     #[bench]
+    fn bench_bloom_filter_mexists(b: &mut Bencher) {
+        let mut tags: Vec<String> = Vec::new();
+        for i in 0..10 {
+            let bytes: [u8; 32] = random::<[u8; 32]>();
+            let tag: String = encode(&bytes[..]).clone();
+            assert!(bloom_filter::add(&bytes).is_ok());
+            tags.push(tag);
+        }
+
+        b.iter(|| bloom_filter::mexists(&tags));
+    }
+
+    #[bench]
     fn bench_redis_query(b: &mut Bencher) {
+        let sender = random::<u32>();
+        let receiver = random::<u32>();
+        let bytes = rand::random::<[u8; 16]>();
+        let sid = encode(&bytes[..]);
+        let ses = Session::new(sid, sender, receiver);
+        redis_pack::add(ses).ok().unwrap();
+
+        b.iter(|| redis_pack::query_users(&sender, FwdType::Send));
+    }
+
+    #[bench]
+    fn bench_redis_query_sid(b: &mut Bencher) {
         let sender = random::<u32>();
         let receiver = random::<u32>();
         let bytes = rand::random::<[u8; 16]>();
@@ -176,15 +227,14 @@ pub mod tests {
         let ses = Session::new(sid, sender, receiver);
 
         redis_pack::add(ses).ok().unwrap();
-        b.iter(|| redis_pack::query_users(&sender, FwdType::Send));
-        
+        b.iter(|| redis_pack::query_sid(&sender, &receiver));
     }
 
-    #[test]
-    fn users_gen_1 () {
-        let users: Vec<u32> = vec![2806396777, 259328394, 4030527275, 1677240722, 1888975301, 902146735, 4206663226, 2261102179];
-        mock_rows_line(&users);
-    }
+    // #[test]
+    // fn users_gen_1 () {
+    //     let users: Vec<u32> = vec![2806396777, 259328394, 4030527275, 1677240722, 1888975301, 902146735, 4206663226, 2261102179];
+    //     mock_rows_full_connect(&users);
+    // }
 
     // Generate rows that connects all users in the vector
     pub fn mock_rows_full_connect(users: &Vec<u32>) {
@@ -206,6 +256,17 @@ pub mod tests {
             let sid = encode(&bytes[..]);
 
             let ses = Session::new(sid, *users.get(i).unwrap(), *users.get(i+1).unwrap());
+            redis_pack::add(ses).ok().unwrap();
+        }
+    }
+
+    pub fn mock_rows_star(users: &Vec<u32>) {
+        let central = users.get(0).unwrap();
+        for i in 1..users.len() {
+            let bytes = rand::random::<[u8; 16]>();
+            let sid = encode(&bytes[..]);
+
+            let ses = Session::new(sid, *central, *users.get(i).unwrap());
             redis_pack::add(ses).ok().unwrap();
         }
     }

@@ -51,6 +51,9 @@ pub mod utils{
 }
 
 pub mod algos{
+    extern crate base64;
+
+    use base64::encode;
     use crate::tool::utils::{hash, crprf, encipher, decipher};
     use crate::db::bloom_filter;
 
@@ -76,21 +79,41 @@ pub mod algos{
     // tag_gen: generate a message tag
     pub fn tag_gen(tag_key: &[u8; 16], message: &[u8]) -> [u8; 32] {
         let hash_msg = hash(message);
-        let tag = crprf(tag_key, &hash_msg);
-        tag
+        crprf(tag_key, &hash_msg)
     }
 
     // proc_tag: process a tag
-    pub fn proc_tag(bk: &[u8; 16], tag: &[u8; 32]) -> [u8; 32] {
-        let processed_tag = crprf(bk, tag);
-        processed_tag
+    pub fn proc_tag(uid: &u32, bk: &[u8; 16], tag: &[u8; 32]) -> [u8; 32] {
+        let uid_byte: [u8; 4] = uid.to_be_bytes();
+        let key: [u8; 20] = {
+            let mut key: [u8; 20] = [0; 20];
+            let (one, two) = key.split_at_mut(bk.len());
+            one.copy_from_slice(bk);
+            two.copy_from_slice(&uid_byte);
+            key
+        };
+        let hash_key = hash(&key);
+        crprf(&hash_key, tag)
     }
 
-    pub fn tag_exists(key: &[u8; 16], bk: &[u8; 16], message: &[u8]) -> bool{
+    pub fn store_tag_gen(uid: &u32, key: &[u8; 16], bk: &[u8; 16], message: &[u8]) -> [u8; 32] {
         let tag = tag_gen(key, message);
-        let tag_hat = proc_tag(bk, &tag);
+        proc_tag(uid, bk, &tag)
+    }
+
+    pub fn tag_exists(uid: &u32, key: &[u8; 16], bk: &[u8; 16], message: &[u8]) -> bool{
+        let tag = store_tag_gen(uid, key, bk, message);
         let mut conn = bloom_filter::connect().ok().unwrap();
-        bloom_filter::exists(&tag_hat)
+        bloom_filter::exists(&tag)
+    }
+
+    pub fn m_tag_exists(tags: &Vec<[u8; 32]>) -> Vec<bool> {
+        let mut tag_str: Vec<String> = Vec::new();
+        for bytes in tags {
+            let bytes_to_str = encode(&bytes[..]);
+            tag_str.push(bytes_to_str);
+        }
+        bloom_filter::mexists(&tag_str)
     }
 
 }
