@@ -405,6 +405,49 @@ if i % 100 == 0 {
                     users.push(u);
                 }
             }
+            mock_rows_star(&users);
+            let nodes = users.split_off(1);
+            
+            let mut fwd_keys: Vec<[u8; 16]> = Vec::new();
+            for k in 0..*branch as usize {
+// println!("depth {}, branch {}", depth, i);
+                let receiver = nodes.get(k).unwrap();
+                let packet = fwd_edge_gen(*start_key, message, root, receiver);
+                fwd_keys.push(packet.key);
+                let _ = fwd_tree_gen(&packet.key, receiver, message, depth - 1, branch);
+            }
+        }
+            
+        // (users, fwd_keys)
+    }
+
+    fn arbitary_tree_gen (depth: u32, branch: u32) -> (Session, [u8; 16], String)  {
+        let msg_bytes = rand::random::<[u8; 16]>();
+        let message = encode(&msg_bytes[..]);
+
+        let start = rand::random::<u32>();
+        let root = rand::random::<u32>();
+        mock_rows_line(&vec![start, root]);
+        
+    // -> (Vec<u32>, Vec<[u8; 16]>)
+    fn fwd_tree_gen(start_key: &[u8; 16], root: &u32, message: &str, depth: u32, branch: &u32)  {
+        if depth != 0 {
+            let mut users: Vec<u32> = Vec::new();
+            users.push(*root);
+            for i in 0..*branch {
+                let u = rand::random::<u32>();
+                users.push(u);
+            }
+            // add fake users to fill sessions per user
+            if branch > &OURS_BRANCH {
+                panic!("Tree branch is larger than ours branch factor!")
+            }
+            else {
+                for j in 0..(OURS_BRANCH - *branch) {
+                    let u = rand::random::<u32>();
+                    users.push(u);
+                }
+            }
 thread::sleep(Duration::from_millis(10));
             // write bk to db
             mock_rows_star(&users);
@@ -431,6 +474,13 @@ thread::sleep(Duration::from_millis(10));
         let root = rand::random::<u32>();
         mock_rows_line(&vec![start, root]);
         
+        let root_packet = new_edge_gen(&message, &start, &root);
+        fwd_tree_gen(&root_packet.key, &root, &message, depth, &branch);
+
+        (Session::new(0.to_string(), start, root), root_packet.key, message)
+    }
+
+
         let root_packet = new_edge_gen(&message, &start, &root);
         fwd_tree_gen(&root_packet.key, &root, &message, depth, &branch);
 
