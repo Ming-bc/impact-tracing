@@ -120,30 +120,8 @@ pub mod redis_pack {
 
     pub fn query_sid(sender: &u32, receiver: &u32) -> String {
         let mut conn = REDIS.get_connection().unwrap();
-        // conn.hget(*sender, *receiver).unwrap()
-// println!("sender {}, receiver {}", sender, receiver);
-        conn.hget(*receiver, *sender).unwrap()
+        conn.hget(*sender, *receiver).unwrap()
     }
-
-    // pub fn safe_query_sid(sender: &u32, receiver: &u32) -> String {
-    //     let mut conn = REDIS.get_connection().unwrap();
-    //     // conn.hget(*sender, *receiver).unwrap()
-    //     let ret: String;
-    //     let redis_result = conn.hget(*receiver, *sender);
-        
-    //     if redis_result.is_err() {
-    //         let bytes = rand::random::<[u8; 16]>();
-    //         let sid = encode(&bytes[..]);
-    //         let ses = Session::new(sid.clone(), *sender, *receiver);
-
-    //         add(&vec![ses]).ok().unwrap();
-    //         ret = sid;
-    //     }
-    //     else {
-    //         ret = redis_result.unwrap();
-    //     }
-    //     ret
-    // }
 
     pub fn query_users(uid: &u32, fwd_type: FwdType) -> Vec<Session> {    
         let mut conn = REDIS.get_connection().unwrap();    
@@ -244,22 +222,6 @@ pub mod tests {
         for u in &mut users {
             assert_eq!(receiver, u.receiver);
         }
-    }
-
-    #[test]
-    fn test_mock_star() {
-        let mut users: Vec<u32> = Vec::new();
-        let length: i32 = 80000;
-        for i in 0..length {
-            let id = random::<u32>();
-            users.push(id);
-        }
-        mock_rows_star(&users);
-        let result = query_users(users.get(0).unwrap(), FwdType::Send);
-        assert_eq!(result.len(), (length-2) as usize);
-        // for sess in result {
-        //     sess.show();
-        // }
     }
 
     #[bench]
