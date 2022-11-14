@@ -35,31 +35,53 @@ pub mod traceback {
         }
     }
 
-    pub fn backward_search(msg: &str, md: TraceData) -> TraceData {
+    pub fn backward_search(msg: &str, md: TraceData) -> (TraceData, Vec<TraceData>) {
         let sessions = redis_pack::query_users(&md.uid, FwdType::Receive);
         let binding = decode(msg).unwrap();
         let msg_bytes = <&[u8]>::try_from(&binding[..]).unwrap();
 
         let mut tags_tbt: Vec<String> = Vec::new();
-        for sess in &sessions {
-            let bk = <&[u8; 16]>::try_from(&decode(sess.id.clone()).unwrap()[..]).unwrap().clone();
-            let tag_bytes = store_tag_gen(&sess.sender, &md.key, &bk, msg_bytes);
+        let mut next_key_set: Vec<[u8; 16]> = Vec::new(); 
 
-            tags_tbt.push(encode(&tag_bytes[..]));
+// let time0 = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+        for sess in &sessions {
+            // bwd tag
+            let bk = <&[u8; 16]>::try_from(&decode(sess.id.clone()).unwrap()[..]).unwrap().clone();
+            let bwd_tag = store_tag_gen(&sess.sender, &md.key, &bk, msg_bytes);
+            // fwd tag
+            let next_key = algos::next_key(&md.key, &bk);
+            let fwd_tag = store_tag_gen(&md.uid, &next_key, &bk, msg_bytes);
+
+            next_key_set.push(next_key);
+            tags_tbt.push(encode(&bwd_tag[..]));
+            tags_tbt.push(encode(&fwd_tag[..]));
         }
 
+// let time1 = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+// println!("Part 1 runtime: {:?}", time1 - time0);
         let bf_result = bloom_filter::mexists(&tags_tbt);
+        let mut source: TraceData = TraceData::new(0, md.key);
+        let mut receivers: Vec<TraceData> = Vec::new();
 
-        for i in 0..bf_result.len() {
-            if *bf_result.get(i).unwrap() == true {
+        for i in 0..(bf_result.len()/2)  {
+            if *bf_result.get(2*i).unwrap() == true {
                 let sess = sessions.get(i).unwrap();
                 let bk = <&[u8; 16]>::try_from(&decode(sess.id.clone()).unwrap()[..]).unwrap().clone();
                 let prev_key = algos::prev_key(&md.key, &bk);
-                return TraceData::new(sess.sender, prev_key);
+                source = TraceData::new(sess.sender, prev_key);
+                break;
+            }
+        }
+
+        for i in 0..(bf_result.len()/2)  {
+            if *bf_result.get(2*i + 1).unwrap() == true {
+                let sess = sessions.get(i).unwrap();
+                let next_key = next_key_set.get(i).unwrap();
+                receivers.push(TraceData {uid: sess.sender, key: *next_key})
             }
         }
         // return uid = 0, when found not one.
-        TraceData::new(0, md.key)
+        (source, receivers)
     }
 
     pub fn forward_search(msg: &str, md: TraceData) -> Vec<TraceData> {
@@ -70,17 +92,18 @@ pub mod traceback {
 
         let mut tags_tbt: Vec<String> = Vec::new();
         let mut next_key_set: Vec<[u8; 16]> = Vec::new();
-
+let time0 = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
         for sess in &sessions {
             let bk = <&[u8; 16]>::try_from(&decode(sess.id.clone()).unwrap()[..]).unwrap().clone();
             let next_key = algos::next_key(&md.key, &bk);
             let tag = store_tag_gen(&sess.sender, &next_key, &bk, msg_bytes);
-            let tag_str = encode(&tag[..]);
 
             next_key_set.push(next_key);
-            tags_tbt.push(tag_str);
+            tags_tbt.push(encode(&tag[..]));
         }
-        
+let time1 = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+// println!("Fwd search part 1 runtime: {:?}", time1 - time0);
+
         let bf_result = bloom_filter::mexists(&tags_tbt);
         for i in 0..bf_result.len() {
             if *bf_result.get(i).unwrap() == true {
@@ -101,29 +124,50 @@ pub mod traceback {
         let mut searched_rcv: HashSet<u32> = HashSet::new();
 
         while (current_sender.uid != 0) | (rcv_set.is_empty() == false) {
+            let mut snd_to_rcvs: Vec<TraceData> = Vec::new();
             // Search the previous node of the sender
             if current_sender.uid != 0 {
-                let prev_sender = backward_search(&report.payload, TraceData { uid: current_sender.uid, key: current_sender.key });
+                let prev_sender: TraceData;
+// let gen_start = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+                (prev_sender, snd_to_rcvs) = backward_search(&report.payload, TraceData { uid: current_sender.uid, key: current_sender.key });
+// let gen_end = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+// println!("Backward search runtime: {:?}", gen_end - gen_start);
                 if prev_sender.uid != 0 {
                     path.push(Edge::new(prev_sender.uid, current_sender.uid.clone()));
                 }
-                // push sender into receiver set
-                rcv_set.push(TraceData { uid: current_sender.uid, key: current_sender.key });
+
+                
+                // searched or not
+                for i in 0..snd_to_rcvs.len() {
+                    let rcv = snd_to_rcvs.get(i).unwrap();
+                    if searched_rcv.contains(&rcv.uid) {
+                        snd_to_rcvs.remove(i);
+                    }
+                    else {
+                        path.push(Edge::new(current_sender.uid, snd_to_rcvs.get(i).unwrap().uid))
+                    }
+                }
+                searched_rcv.insert(current_sender.uid);
                 current_sender = TraceData::from(prev_sender);
             }
+
             // Search the receivers of the message
             let rcv_len_at_begin = rcv_set.len();
             if rcv_set.is_empty() == false {
                 let mut outside_set: Vec<TraceData> = Vec::new();
                 for out_td in &rcv_set {
+// let gen_start = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
                     let mut inside_set = forward_search(&report.payload, TraceData { uid: out_td.uid, key: out_td.key });
+// let gen_end = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+// println!("Forward search runtime: {:?}", gen_end - gen_start);
+                    // searched or not ?
                     for i in 0..inside_set.len() {
                         let rcv = inside_set.get(i).unwrap();
                         if searched_rcv.contains(&rcv.uid) {
                             inside_set.remove(i);
                         }
                     }
-
+                    // if first found, then put in path TODO: reconstruct
                     if inside_set.is_empty() == false {
                         for in_td in & inside_set {
                             path.push(Edge::new(out_td.uid, in_td.uid))
@@ -133,6 +177,8 @@ pub mod traceback {
                 }
                 rcv_set.extend(outside_set);
             }
+            
+            rcv_set.extend(snd_to_rcvs);
             // pop the receivers that already search
             let mut prev_rcv_set = rcv_set;
             rcv_set = prev_rcv_set.split_off(rcv_len_at_begin);
@@ -150,6 +196,7 @@ mod tests {
     extern crate base64;
     extern crate test;
 
+    use std::f32::consts::E;
     use std::panic::UnwindSafe;
 
     use base64::encode;
@@ -183,7 +230,7 @@ mod tests {
         let message = encode(&msg_bytes[..]);
         let report_key = new_edge_gen(&message, &sender, &receiver).key;
         // Bwd Search
-        let result = traceback::backward_search(&message, TraceData::new(receiver, report_key));
+        let (result, _) = traceback::backward_search(&message, TraceData::new(receiver, report_key));
         assert_eq!(result.uid, sender);
 
         // let mut conn = redis_pack::connect().unwrap();
@@ -205,6 +252,7 @@ mod tests {
     #[test]
     fn test_tracing() {
         // Path case 1: 1-2-3-4-5
+        // Path case 2: 1-2-3-4-5, 3-6-7, 6-8
         let (users, keys, message) = path_cases_2();
         let report_key = keys.get(1).unwrap();
 
@@ -226,9 +274,13 @@ mod tests {
 
     #[test]
     fn test_tracing_in_abitary_path() {
-        let path_length: u32 = 29525;
+        let path_length: u32 = 23619;
         let branch_factor: u32 = OURS_BRANCH;
+        
+let gen_start = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
         let (sess, key, message) = arbitary_path_gen(path_length, branch_factor);
+let gen_end = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+println!("Gentime: {:?}", gen_end - gen_start);
 
 let trace_start = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
         let path = traceback::tracing(MsgReport::new(key, message.clone()), &sess.receiver);
@@ -243,13 +295,21 @@ println!("Runtime: {:?}", trace_end - trace_start);
 
     #[test]
     fn test_tracing_in_abitary_tree() {
-        let depth: u32 = 8;
-        let branch_factor: u32 = 4;
-        let mut totoal_edges: u32 = 1;
+        let depth: u32 = 6;
+        let branch_factor: u32 = 3;
+        let mut fwd_tree_edges: u32 = 1;
+        let mut search_tree_size: u32 = 1;
         for i in 0..(depth + 1) {
-            totoal_edges += branch_factor.pow(i);
+            fwd_tree_edges += branch_factor.pow(i);
+            if (i == depth) | (i == 0) {
+                search_tree_size += 9 * branch_factor.pow(i);
+            }
+            else {
+                search_tree_size += branch_factor.pow(i) * (10 - branch_factor - 1);
+            }
         }
-        println!("Total length is {}", totoal_edges);
+        println!("Forward tree size is {}", fwd_tree_edges - 1);
+        println!("Search tree size is {}", search_tree_size - 1);
 
 let gen_start = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
         let (sess, key, message) = arbitary_tree_gen(depth, branch_factor);
@@ -261,8 +321,8 @@ let trace_start = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
 let trace_end = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
 
 println!("Runtime: {:?}", trace_end - trace_start);
-println!("Path length: {}", path.len());
-        assert_eq!(path.len() as u32, totoal_edges - 1);
+        assert_eq!(path.len() as u32, fwd_tree_edges - 1);
+
 
         let mut conn = redis_pack::connect().unwrap();
         let _: () = redis::cmd("FLUSHDB").query(&mut conn).unwrap();
@@ -295,7 +355,7 @@ println!("Path length: {}", path.len());
 
     #[bench]
     fn bench_tracing_in_abitary_path(b: &mut Bencher) {
-        let path_length: u32 = 1000;
+        let path_length: u32 = 100;
         let branch_factor: u32 = 10;
         let (sess, key, message) = arbitary_path_gen(path_length, branch_factor);
 
@@ -338,37 +398,76 @@ println!("Path length: {}", path.len());
         for i in 0..(users.len()-1) {
             let sender = users.get(i).unwrap();
             let receiver = users.get(i+1).unwrap();
-            let bk = &base64::decode(redis_pack::query_sid(&sender, &receiver).clone()).unwrap()[..];
+
+            let sid = redis_pack::query_sid(&sender, &receiver);
+            let bk = &base64::decode(sid.clone()).unwrap()[..];
+
             sessions.push(Session::new(0.to_string(), *sender, *receiver));
 
             let prev_key = *keys.get(i).unwrap();
             fwd_edge_gen(prev_key, message, &sender, &receiver);
             let next_key = algos::next_key(&prev_key, <&[u8; 16]>::try_from(bk).unwrap());
             keys.push(next_key);
+
+// TODO: avoid query error
+if i % 100 == 0 {
+    thread::sleep(Duration::from_millis(50));
+}
         }
         // TODO: reconstruct new_path_gen
         keys
     }
 
+    pub fn redis_mock_rows_line(users: &Vec<u32>) -> Vec<Session> {
+        let mut sessions: Vec<Session> = Vec::new();
+        for i in 0..(users.len()-1) {
+            let bytes = rand::random::<[u8; 16]>();
+            let sid = encode(&bytes[..]);
+
+            let ses = Session::new(sid, *users.get(i).unwrap(), *users.get(i+1).unwrap());
+            let vec_ses = vec![ses];
+            sessions.extend(vec_ses);
+        }
+        sessions
+    }
+
+    pub fn redis_mock_rows_star(users: &Vec<u32>) -> Vec<Session> {
+        let mut sessions: Vec<Session> = Vec::new();
+        let central = users.get(0).unwrap();
+        for i in 1..users.len() {
+            let bytes = rand::random::<[u8; 16]>();
+            let sid = encode(&bytes[..]);
+
+            let ses = Session::new(sid, *central, *users.get(i).unwrap());
+            let vec_ses = vec![ses];
+            sessions.extend(vec_ses);
+        }
+        sessions
+    }
+
     // generate a path
     fn arbitary_path_gen (length_of_path: u32, num_of_sess_per_user: u32) -> (Session, [u8; 16], String)  {
         // generate sessions
+        let mut search_sessions: Vec<Session> = Vec::new();
         let mut users: Vec<u32> = Vec::new();
         for i in 0..length_of_path {
-            let u_1 = rand::random::<u32>();
+            // let u_1 = rand::random::<u32>();
+            let u_1 = i * 10 + 1;
             users.push(u_1);
             let mut sess_of_user: Vec<u32> = Vec::new();
             sess_of_user.push(u_1);
-            for j in 0..num_of_sess_per_user {
-                let u_2 = rand::random::<u32>();
+            for j in 0..(num_of_sess_per_user-1) {
+                // let u_2 = rand::random::<u32>();
+                let u_2 = u_1 + j + 1;
                 sess_of_user.push(u_2);
             }
-            mock_rows_star(&sess_of_user);
-if i % 100 == 0 {
-    thread::sleep(Duration::from_millis(500));
-}
+            // mock_rows_star(&sess_of_user);
+            search_sessions.extend(redis_mock_rows_star(&sess_of_user));
         }
-        mock_rows_line(&users);
+        // mock_rows_line(&users);
+        search_sessions.extend(redis_mock_rows_line(&users));
+        
+        let _ = redis_pack::pipe_add_auto_cut(&mut search_sessions);
 
         // generate forward path
         let msg_bytes = rand::random::<[u8; 16]>();
@@ -386,41 +485,6 @@ if i % 100 == 0 {
         (report_sess, report_key, message)
     }
 
-    // -> (Vec<u32>, Vec<[u8; 16]>)
-    fn fwd_tree_gen(start_key: &[u8; 16], root: &u32, message: &str, depth: u32, branch: &u32)  {
-        if depth != 0 {
-            let mut users: Vec<u32> = Vec::new();
-            users.push(*root);
-            for i in 0..*branch {
-                let u = rand::random::<u32>();
-                users.push(u);
-            }
-            // add fake users to fill sessions per user
-            if branch > &OURS_BRANCH {
-                panic!("Tree branch is larger than ours branch factor!")
-            }
-            else {
-                for j in 0..(OURS_BRANCH - *branch) {
-                    let u = rand::random::<u32>();
-                    users.push(u);
-                }
-            }
-            mock_rows_star(&users);
-            let nodes = users.split_off(1);
-            
-            let mut fwd_keys: Vec<[u8; 16]> = Vec::new();
-            for k in 0..*branch as usize {
-// println!("depth {}, branch {}", depth, i);
-                let receiver = nodes.get(k).unwrap();
-                let packet = fwd_edge_gen(*start_key, message, root, receiver);
-                fwd_keys.push(packet.key);
-                let _ = fwd_tree_gen(&packet.key, receiver, message, depth - 1, branch);
-            }
-        }
-            
-        // (users, fwd_keys)
-    }
-
     fn arbitary_tree_gen (depth: u32, branch: u32) -> (Session, [u8; 16], String)  {
         let msg_bytes = rand::random::<[u8; 16]>();
         let message = encode(&msg_bytes[..]);
@@ -428,9 +492,14 @@ if i % 100 == 0 {
         let start = rand::random::<u32>();
         let root = rand::random::<u32>();
         mock_rows_line(&vec![start, root]);
+        let root_packet = new_edge_gen(&message, &start, &root);
+        fwd_tree_gen(&root_packet.key, &root, &message, depth, &branch);
+
+        (Session::new(0.to_string(), start, root), root_packet.key, message)
+    }
         
     // -> (Vec<u32>, Vec<[u8; 16]>)
-    fn fwd_tree_gen(start_key: &[u8; 16], root: &u32, message: &str, depth: u32, branch: &u32)  {
+    fn fwd_tree_gen(start_key: &[u8; 16], root: &u32, message: &str, depth: u32, branch: &u32) {
         if depth != 0 {
             let mut users: Vec<u32> = Vec::new();
             users.push(*root);
@@ -462,31 +531,7 @@ thread::sleep(Duration::from_millis(10));
                 let _ = fwd_tree_gen(&packet.key, receiver, message, depth - 1, branch);
             }
         }
-            
-        // (users, fwd_keys)
     }
-
-    fn arbitary_tree_gen (depth: u32, branch: u32) -> (Session, [u8; 16], String)  {
-        let msg_bytes = rand::random::<[u8; 16]>();
-        let message = encode(&msg_bytes[..]);
-
-        let start = rand::random::<u32>();
-        let root = rand::random::<u32>();
-        mock_rows_line(&vec![start, root]);
-        
-        let root_packet = new_edge_gen(&message, &start, &root);
-        fwd_tree_gen(&root_packet.key, &root, &message, depth, &branch);
-
-        (Session::new(0.to_string(), start, root), root_packet.key, message)
-    }
-
-
-        let root_packet = new_edge_gen(&message, &start, &root);
-        fwd_tree_gen(&root_packet.key, &root, &message, depth, &branch);
-
-        (Session::new(0.to_string(), start, root), root_packet.key, message)
-    }
-
 
     // Normal tree: 1-2-3-4-5
     fn path_cases_1() -> (Vec<u32>, Vec<[u8;16]>, String) {

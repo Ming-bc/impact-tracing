@@ -62,6 +62,10 @@ pub mod messaging {
         pub fn new (sid: String, snd_id: u32, rcv_id: u32) -> Self {
             Session { id: sid, sender: snd_id, receiver: rcv_id }
         }
+        
+        pub fn show (&self) {
+            println!("Sender {}, Receiver {}, ID {}", self.sender, self.receiver, self.id);
+        }
     }
 
     // new_msg:
