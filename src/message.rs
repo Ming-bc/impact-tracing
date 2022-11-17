@@ -74,12 +74,17 @@ pub mod messaging {
         MsgPacket::new(&tag_key, message)
     }
     // fwd_msg:
-    pub fn fwd_msg(key: &[u8; 16], bk: &[u8; 16], message: &str, fwd_type: FwdType) -> MsgPacket {
+    pub fn fwd_msg(key: &[u8; 16], bk: &Vec<[u8; 16]>, message: &str, fwd_type: FwdType) -> MsgPacket {
         let tag_key:[u8; 16];
+        let curr_bk = bk.get(0).unwrap();
 
         match fwd_type {
-            FwdType::Send => tag_key = prev_key(key, bk),
-            FwdType::Receive => tag_key = next_key(key, bk),
+            FwdType::Send => {
+                let prev_bk = bk.get(1).unwrap();
+                let k_p = prev_key(key, prev_bk);
+                tag_key = next_key(&k_p, curr_bk)
+            },
+            FwdType::Receive => tag_key = next_key(key, curr_bk),
         }
         MsgPacket::new(&tag_key, message)
     }
@@ -197,7 +202,7 @@ mod tests {
         let message = rand::random::<[u8; 16]>();
         let msg_str = encode(&message[..]);
         
-        b.iter(||fwd_msg(&key, &bk, &msg_str, FwdType::Receive));
+        b.iter(||fwd_msg(&key, &vec![bk], &msg_str, FwdType::Receive));
     }
 
     #[bench]

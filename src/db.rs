@@ -288,37 +288,4 @@ pub mod tests {
         }
     }
 
-    // Generate rows that connects users as a line
-    pub fn mock_rows_line(users: &Vec<u32>) -> Vec<Session> {
-        let mut sessions: Vec<Session> = Vec::new();
-        for i in 0..(users.len()-1) {
-            let bytes = rand::random::<[u8; 16]>();
-            let sid = encode(&bytes[..]);
-
-            let ses = Session::new(sid, *users.get(i).unwrap(), *users.get(i+1).unwrap());
-            let vec_ses = vec![ses];
-            redis_pack::add(&vec_ses).ok().unwrap();
-            sessions.extend(vec_ses);
-        }
-        // redis_pack::pipe_add(sessions).ok().unwrap();
-        sessions
-    }
-
-    pub fn mock_rows_star(users: &Vec<u32>) -> Vec<Session> {
-        let mut sessions: Vec<Session> = Vec::new();
-        let central = users.get(0).unwrap();
-        for i in 1..users.len() {
-            let bytes = rand::random::<[u8; 16]>();
-            let sid = encode(&bytes[..]);
-
-            let ses = Session::new(sid, *central, *users.get(i).unwrap());
-            let vec_ses = vec![ses];
-            
-            redis_pack::add(&vec_ses).ok().unwrap();
-            sessions.extend(vec_ses);
-        }
-        // redis_pack::pipe_add(sessions).ok().unwrap();
-        sessions
-    }
-
 }
