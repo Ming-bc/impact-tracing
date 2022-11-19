@@ -2,7 +2,7 @@ pub mod display {
     extern crate petgraph;
     use petgraph::dot::Dot;
 
-    use crate::trace::traceback::{Edge};
+    use crate::message::messaging::Edge;
     use std::collections::HashMap;
     use petgraph::graph::{NodeIndex, Graph};
 

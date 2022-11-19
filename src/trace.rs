@@ -4,7 +4,7 @@ pub mod traceback {
     extern crate base64;
 
     use std::collections::HashSet;
-    use crate::message::messaging::{MsgReport, FwdType, MsgPacket, Session};
+    use crate::message::messaging::{MsgReport, FwdType, Edge, MsgPacket, Session};
     use crate::tool::algos::{self, store_tag_gen};
     use crate::db::{redis_pack, bloom_filter};
     use base64::{decode, encode};
@@ -18,20 +18,6 @@ pub mod traceback {
     impl TraceData {
         pub fn new(id: u32, trace_key: [u8; 16]) -> TraceData {
             TraceData { uid: id, key: trace_key }
-        }
-    }
-
-    pub struct Edge {
-        pub sender: u32,
-        pub receiver: u32,
-    }
-
-    impl Edge {
-        pub fn new(snd_id: u32, rcv_id: u32) -> Edge {
-            Edge { sender: snd_id, receiver: rcv_id }
-        }
-        pub fn show(&self) {
-            print!("U{} - U{}, ", self.sender, self.receiver);
         }
     }
 
@@ -187,6 +173,7 @@ mod tests {
     extern crate test;
 
     use core::num;
+    use std::collections::HashMap;
     use std::f32::consts::E;
     use std::panic::UnwindSafe;
 
@@ -208,6 +195,24 @@ mod tests {
 
     const OURS_BRANCH: u32 = 10;
 
+    #[test]
+    fn sid_query_test () {
+        let length_of_path = 100;
+        let num_of_sess_per_user = 10;
+        let (mut fwd_sessions, mut search_sessions, _) = path_sess_gen(length_of_path, num_of_sess_per_user);
+
+        let _ = redis_pack::pipe_add_auto_cut(&mut fwd_sessions);
+        let sid_map = sess_to_map(&fwd_sessions);
+        
+        for sess in fwd_sessions {
+            let sid_key = sess.sender + sess.receiver;
+            let query_id = redis_pack::query_sid(&sess.sender, &sess.receiver);
+            let map_id = sid_map.get(&sid_key).unwrap();
+            assert_eq!(query_id, *map_id);
+        }
+        let mut conn = redis_pack::connect().unwrap();
+        let _: () = redis::cmd("FLUSHDB").query(&mut conn).unwrap();
+    }
 
     #[test]
     fn test_bwd_search() {
@@ -265,7 +270,7 @@ mod tests {
 
     #[test]
     fn test_tracing_in_abitary_path() {
-        let path_length: u32 = 874;
+        let path_length: u32 = 29525;
         let branch_factor: u32 = OURS_BRANCH;
         
 let gen_start = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
@@ -369,8 +374,7 @@ println!("Runtime: {:?}", trace_end - trace_start);
     }
     
     // generate a forward edge from a sender to a receiver
-    fn fwd_edge_gen(prev_key: [u8; 16], message: &str, sender: &u32, receiver: &u32) -> MsgPacket {
-        let bk = &base64::decode(redis_pack::query_sid(sender, receiver)).unwrap()[..];
+    fn fwd_edge_gen(prev_key: [u8; 16], message: &str, sender: &u32, receiver: &u32, bk: &[u8]) -> MsgPacket {
         let bk_16 = <&[u8; 16]>::try_from(bk).unwrap();
         let sess = Session::new( encode(bk_16), *sender, *receiver);
         let packet = messaging::fwd_msg(&prev_key, &vec![*bk_16], message, FwdType::Receive);
@@ -380,46 +384,21 @@ println!("Runtime: {:?}", trace_end - trace_start);
         packet
     }
 
-    fn fwd_path_gen(start_key: &[u8; 16], message: &str, users: Vec<u32>) -> Vec<[u8; 16]> {
-        let mut keys: Vec<[u8;16]> = Vec::new();
-        let mut sessions: Vec<Session> = Vec::new();
-
-        keys.push(*start_key);
-
-        for i in 0..(users.len()-1) {
-            let sender = users.get(i).unwrap();
-            let receiver = users.get(i+1).unwrap();
-
-            let sid = redis_pack::query_sid(&sender, &receiver);
-            let bk = &base64::decode(sid.clone()).unwrap()[..];
-
-            sessions.push(Session::new(0.to_string(), *sender, *receiver));
-
-            let prev_key = *keys.get(i).unwrap();
-            fwd_edge_gen(prev_key, message, &sender, &receiver);
-            let next_key = algos::next_key(&prev_key, <&[u8; 16]>::try_from(bk).unwrap());
-            keys.push(next_key);
-
-// TODO: avoid query error
-if i % 100 == 0 {
-    thread::sleep(Duration::from_millis(30));
-}
-        }
-        keys
-    }
-
     // generate a path
     fn arbitary_path_gen (length_of_path: u32, num_of_sess_per_user: u32) -> (Session, [u8; 16], String)  {
         // generate sessions
-        let (mut search_sessions, mut users) = path_sess_gen(length_of_path, num_of_sess_per_user);
-        let _ = redis_pack::pipe_add_auto_cut(&mut search_sessions);
+        let (mut fwd_sessions, mut padding_session, mut users) = path_sess_gen(length_of_path, num_of_sess_per_user);
+
+        let _ = redis_pack::pipe_add_auto_cut(&mut fwd_sessions);
+        let _ = redis_pack::pipe_add_auto_cut(&mut padding_session);
 
         // generate forward path
         let msg_bytes = rand::random::<[u8; 16]>();
         let message = encode(&msg_bytes[..]);
 
         let first_packet = new_edge_gen(&message, users.get(0).unwrap(), users.get(1).unwrap());
-        let mut path_keys = fwd_path_gen(&first_packet.key, &message, users.clone().split_off(1));
+        let sid_map = sess_to_map(&fwd_sessions);
+        let mut path_keys = fwd_path_gen(&first_packet.key, &message, users.clone().split_off(1), sid_map);
 
         // return the last session, key and message
         let report_key = path_keys.pop().unwrap();
@@ -450,19 +429,43 @@ if i % 100 == 0 {
         (Session::new(0.to_string(), start, root), root_packet.key, message)
     }
 
+    fn fwd_path_gen(start_key: &[u8; 16], message: &str, users: Vec<u32>, sids: HashMap<u32,String>) -> Vec<[u8; 16]> {
+        let mut keys: Vec<[u8;16]> = Vec::new();
+        let mut sessions: Vec<Session> = Vec::new();
+
+        keys.push(*start_key);
+
+        for i in 0..(users.len()-1) {
+            let sender = users.get(i).unwrap();
+            let receiver = users.get(i+1).unwrap();
+            let sid = sids.get(&(*sender + *receiver)).unwrap().clone();
+            let bk = &base64::decode(sid.clone()).unwrap()[..];
+
+            sessions.push(Session::new(0.to_string(), *sender, *receiver));
+
+            let prev_key = *keys.get(i).unwrap();
+            fwd_edge_gen(prev_key, message, &sender, &receiver, bk);
+            let next_key = algos::next_key(&prev_key, <&[u8; 16]>::try_from(bk).unwrap());
+            keys.push(next_key);
+        }
+        keys
+    }
+
     fn fwd_tree_gen(start_key: &[u8; 16], root: &u32, message: &str, depth: u32, branch: &u32) {
         if depth != 0 {
             let mut fwd_keys: Vec<[u8; 16]> = Vec::new();
             for k in 1..(*branch + 1) as usize {
                 let receiver = (root - 1) * branch + (k as u32) + 1;
-                let packet = fwd_edge_gen(*start_key, message, root, &receiver);
+                let sid = redis_pack::query_sid(root, &receiver);
+                let bk = &base64::decode(sid.clone()).unwrap()[..];
+                let packet = fwd_edge_gen(*start_key, message, root, &receiver, bk);
                 fwd_keys.push(packet.key);
                 let _ = fwd_tree_gen(&packet.key, &receiver, message, depth - 1, branch);
             }
         }
     }
 
-    fn tree_sess_gen(mut depth: u32, branch: u32) -> (Vec<Session>, Vec<Session>) {
+    fn tree_sess_gen(depth: u32, branch: u32) -> (Vec<Session>, Vec<Session>) {
         let mut sess_tree: Vec<Session> = Vec::new();
         let mut search_tree: Vec<Session> = Vec::new();
         // generate users and store to db
@@ -502,8 +505,8 @@ if i % 100 == 0 {
         (sess_tree, search_tree)
     }
 
-    fn path_sess_gen (length: u32, sess_per_user: u32) -> (Vec<Session>, Vec<u32>) {
-        let mut search_sessions: Vec<Session> = Vec::new();
+    fn path_sess_gen (length: u32, sess_per_user: u32) -> (Vec<Session>, Vec<Session>, Vec<u32>) {
+        let mut padding_sessions: Vec<Session> = Vec::new();
         let mut users: Vec<u32> = Vec::new();
         for i in 0..length {
             // let u_1 = rand::random::<u32>();
@@ -517,11 +520,20 @@ if i % 100 == 0 {
                 sess_of_user.push(u_2);
             }
             // mock_rows_star(&sess_of_user);
-            search_sessions.extend(mock_rows_star(&sess_of_user));
+            padding_sessions.extend(mock_rows_star(&sess_of_user));
         }
         // mock_rows_line(&users);
-        search_sessions.extend(mock_rows_line(&users));
-        (search_sessions, users)
+        let fwd_sessions = mock_rows_line(&users);
+        (fwd_sessions, padding_sessions, users)
+    }
+
+    fn sess_to_map (sessions: &Vec<Session>) -> HashMap<u32, String> {
+        let mut sid_map:HashMap<u32, String>  = HashMap::new();
+        for sess in sessions {
+            let key = sess.sender + sess.receiver;
+            sid_map.insert(key, sess.id.clone());
+        }
+        sid_map
     }
 
     pub fn mock_rows_line(users: &Vec<u32>) -> Vec<Session> {
@@ -562,7 +574,7 @@ if i % 100 == 0 {
         // generate the first edge of a path: 1-2
         let first_packet = new_edge_gen(&message, users.get(0).unwrap(), users.get(1).unwrap());
         // generate a forward path: 2-3-4-5
-        let mut path_keys = fwd_path_gen(&first_packet.key, &message, users.clone().split_off(1));
+        let mut path_keys = fwd_path_gen_with_query(&first_packet.key, &message, users.clone().split_off(1));
         (users, path_keys, message)
     }
 
@@ -580,22 +592,45 @@ if i % 100 == 0 {
         // Path 1: 2-3-4-5
         let users_path_1: Vec<u32> = vec![259328394, 4030527275, 1677240722, 1888975301];
         let start_key_1 = &first_packet.key;
-        let mut keys_1 = fwd_path_gen(&start_key_1, &message, users_path_1);
+        let mut keys_1 = fwd_path_gen_with_query(&start_key_1, &message, users_path_1);
 
         // Path 2: 3-6-7
         let users_path_2: Vec<u32> = vec![4030527275, 902146735, 4206663226];
         let start_key_2 = &keys_1.get(1).unwrap();
-        let mut keys_2 = fwd_path_gen(&start_key_2, &message, users_path_2);
+        let mut keys_2 = fwd_path_gen_with_query(&start_key_2, &message, users_path_2);
 
         // Path 3: 6-8
         let users_path_2: Vec<u32> = vec![902146735, 2261102179];
         let start_key_2 = &keys_2.get(1).unwrap();
-        let mut keys_3 = fwd_path_gen(&start_key_2, &message, users_path_2);
+        let mut keys_3 = fwd_path_gen_with_query(&start_key_2, &message, users_path_2);
 
         keys_1.append(&mut keys_2.split_off(1));
         keys_1.append(&mut keys_3.split_off(1));
 
         (users, keys_1, message)
+    }
+
+    fn fwd_path_gen_with_query(start_key: &[u8; 16], message: &str, users: Vec<u32>) -> Vec<[u8; 16]> {
+        let mut keys: Vec<[u8;16]> = Vec::new();
+        let mut sessions: Vec<Session> = Vec::new();
+
+        keys.push(*start_key);
+
+        for i in 0..(users.len()-1) {
+            let sender = users.get(i).unwrap();
+            let receiver = users.get(i+1).unwrap();
+
+            let sid = redis_pack::query_sid(&sender, &receiver);
+            let bk = &base64::decode(sid.clone()).unwrap()[..];
+
+            sessions.push(Session::new(0.to_string(), *sender, *receiver));
+
+            let prev_key = *keys.get(i).unwrap();
+            fwd_edge_gen(prev_key, message, &sender, &receiver, bk);
+            let next_key = algos::next_key(&prev_key, <&[u8; 16]>::try_from(bk).unwrap());
+            keys.push(next_key);
+        }
+        keys
     }
 
 }

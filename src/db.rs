@@ -58,7 +58,7 @@ pub mod redis_pack {
     use redis::{Connection, Commands};
     use base64::{encode,decode};
     use lazy_static::lazy_static;
-    use crate::message::messaging::{Session, FwdType};
+    use crate::message::messaging::{Session, FwdType, Edge};
     use std::time::Duration;
     use std::thread;
 
@@ -123,6 +123,17 @@ pub mod redis_pack {
         conn.hget(*sender, *receiver).unwrap()
     }
 
+    pub fn pipe_query_sid(edges: &Vec<Edge>) -> Vec<String> {
+        let mut conn = REDIS.get_connection().unwrap();
+        let mut pipe = redis::Pipeline::new();
+        for sess in edges {
+            let command = redis::cmd("HGET").arg(sess.sender).arg(sess.receiver).to_owned();
+            pipe.add_command(command);
+        }
+        let result = pipe.query(&mut conn).unwrap();
+        result
+    }
+
     pub fn query_users(uid: &u32, fwd_type: FwdType) -> Vec<Session> {    
         let mut conn = REDIS.get_connection().unwrap();    
         let users: Vec<String> = conn.hgetall(*uid).unwrap();
@@ -164,7 +175,7 @@ pub mod tests {
     use test::Bencher;
     use redis::ConnectionLike;
     use crate::db::{bloom_filter, redis_pack};
-    use crate::message::messaging::{Session, FwdType};
+    use crate::message::messaging::{Session, FwdType, Edge};
 
     use super::redis_pack::query_users;
 
@@ -224,6 +235,22 @@ pub mod tests {
         }
     }
 
+    
+    #[test]
+    fn test_redis_pipe_query_sid() {
+        let sender = random::<u32>();
+        let receiver = random::<u32>();
+        let bytes = rand::random::<[u8; 16]>();
+        let sid = encode(&bytes[..]);
+        let ses = Session::new(sid.clone(), sender, receiver);
+
+        redis_pack::add(&vec![ses]).ok().unwrap();
+        let result = redis_pack::pipe_query_sid(&vec!(Edge::new(sender, receiver)));
+        for res in result {
+            assert_eq!(sid, res);
+        }
+    }
+
     #[bench]
     fn bench_bloom_filter_query(b: &mut Bencher) {
         let bytes = random::<[u8; 32]>();
@@ -269,11 +296,11 @@ pub mod tests {
         b.iter(|| redis_pack::query_sid(&sender, &receiver));
     }
 
-    // #[test]
-    // fn users_gen_1 () {
-    //     let users: Vec<u32> = vec![2806396777, 259328394, 4030527275, 1677240722, 1888975301, 902146735, 4206663226, 2261102179];
-    //     mock_rows_full_connect(&users);
-    // }
+    #[test] #[ignore]
+    fn users_gen_1 () {
+        let users: Vec<u32> = vec![2806396777, 259328394, 4030527275, 1677240722, 1888975301, 902146735, 4206663226, 2261102179];
+        mock_rows_full_connect(&users);
+    }
 
     // Generate rows that connects all users in the vector
     pub fn mock_rows_full_connect(users: &Vec<u32>) {

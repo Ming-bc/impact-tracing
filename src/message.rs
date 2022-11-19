@@ -12,6 +12,20 @@ pub mod messaging {
         Receive,
     }
 
+    pub struct Edge {
+        pub sender: u32,
+        pub receiver: u32,
+    }
+
+    impl Edge {
+        pub fn new(snd_id: u32, rcv_id: u32) -> Edge {
+            Edge { sender: snd_id, receiver: rcv_id }
+        }
+        pub fn show(&self) {
+            print!("U{} - U{}, ", self.sender, self.receiver);
+        }
+    }
+
     #[derive(Serialize, Deserialize, Debug)]
     pub struct MsgPacket {
         pub key: [u8; 16],
@@ -121,11 +135,8 @@ pub mod messaging {
 
     pub fn vrf_report(sess: Session, report: MsgReport) -> bool {
         let bk = &decode(redis_pack::query_sid(&sess.sender, &sess.receiver).clone()).unwrap()[..];
-
         tag_exists(&sess.sender, &report.key, <&[u8; 16]>::try_from(bk).unwrap(), &decode(report.payload.clone()).unwrap()[..])
     }
-
-    
     
 }
 
