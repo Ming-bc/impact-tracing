@@ -11,7 +11,7 @@ pub mod bloom_filter {
     use lazy_static::lazy_static;
 
     const BF_IP: &str = "redis://localhost:6379/";
-    const BF_NAME: &str = "filter_1";
+    const BF_NAME: &str = "newFilter";
 
     lazy_static! {
         pub static ref BLOOM: redis::Client = create_bloom_filter_client();
@@ -171,13 +171,10 @@ pub mod tests {
     use base64::encode;
     // extern crate test;
     use rand::random;
-    use serde::de::value;
     use test::Bencher;
     use redis::ConnectionLike;
     use crate::db::{bloom_filter, redis_pack};
     use crate::message::messaging::{Session, FwdType, Edge};
-
-    use super::redis_pack::query_users;
 
     // fn init_logger() {
     //     //env_logger::init();
@@ -294,25 +291,6 @@ pub mod tests {
 
         redis_pack::add(&vec![ses]).ok().unwrap();
         b.iter(|| redis_pack::query_sid(&sender, &receiver));
-    }
-
-    #[test] #[ignore]
-    fn users_gen_1 () {
-        let users: Vec<u32> = vec![2806396777, 259328394, 4030527275, 1677240722, 1888975301, 902146735, 4206663226, 2261102179];
-        mock_rows_full_connect(&users);
-    }
-
-    // Generate rows that connects all users in the vector
-    pub fn mock_rows_full_connect(users: &Vec<u32>) {
-        for i in 0..users.len() {
-            for j in i+1..users.len() {
-                let bytes = rand::random::<[u8; 16]>();
-                let sid = encode(&bytes[..]);
-
-                let ses = Session::new(sid, *users.get(i).unwrap(), *users.get(j).unwrap());
-                redis_pack::add(&vec![ses]).ok().unwrap();
-            }
-        }
     }
 
 }
