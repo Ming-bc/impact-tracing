@@ -19,6 +19,9 @@ pub mod traceback {
         pub fn new(id: u32, trace_key: [u8; 16]) -> TraceData {
             TraceData { uid: id, key: trace_key }
         }
+        pub fn hash(&self) -> String {
+            self.uid.to_string() + &encode(&self.key[..])
+        }
     }
 
     pub fn backward_search(msg: &str, md: TraceData) -> (TraceData, Vec<TraceData>) {
@@ -104,7 +107,7 @@ pub mod traceback {
         let mut path: Vec<Edge> = Vec::new();
         let mut current_sender= TraceData { uid: *snd_start, key: report.key };
         let mut rcv_set: Vec<TraceData> = Vec::new();
-        let mut searched_rcv: HashSet<u32> = HashSet::new();
+        let mut searched_rcv: HashSet<String> = HashSet::new();
 
         while (current_sender.uid != 0) | (rcv_set.is_empty() == false) {
             let mut snd_to_rcvs: Vec<TraceData> = Vec::new();
@@ -119,14 +122,14 @@ pub mod traceback {
                 // searched or not
                 for i in 0..snd_to_rcvs.len() {
                     let rcv = snd_to_rcvs.get(i).unwrap();
-                    if searched_rcv.contains(&rcv.uid) {
+                    if searched_rcv.contains(&rcv.hash()) {
                         snd_to_rcvs.remove(i);
                     }
                     else {
                         path.push(Edge::new(current_sender.uid, snd_to_rcvs.get(i).unwrap().uid))
                     }
                 }
-                searched_rcv.insert(current_sender.uid);
+                searched_rcv.insert(current_sender.hash());
                 current_sender = TraceData::from(prev_sender);
             }
 
@@ -139,7 +142,7 @@ pub mod traceback {
                     // searched or not ?
                     for i in 0..inside_set.len() {
                         let rcv = inside_set.get(i).unwrap();
-                        if searched_rcv.contains(&rcv.uid) {
+                        if searched_rcv.contains(&rcv.hash()) {
                             inside_set.remove(i);
                         }
                     }
@@ -159,7 +162,7 @@ pub mod traceback {
             let mut prev_rcv_set = rcv_set;
             rcv_set = prev_rcv_set.split_off(rcv_len_at_begin);
             for user in prev_rcv_set {
-                searched_rcv.insert(user.uid);
+                searched_rcv.insert(user.hash());
             }
         }
         path
@@ -262,6 +265,7 @@ mod tests {
 
     #[test]
     fn test_tracing_in_path_and_tree () {
+        let loop_index: usize = 5;
         let depth: u32 = 7;
         let branch_factor: u32 = 3;
 
@@ -272,44 +276,10 @@ mod tests {
         print!("Search size: {}; ", search_tree_size - 1);
         print!("Path length: {}; \n", path_length);
 
-        test_tracing_in_abitary_path(&path_length);
-        test_tracing_in_abitary_tree(&depth, &branch_factor, &fwd_tree_edges);
-    }
-
-    fn test_tracing_in_abitary_path(path_length: &u32) {
-
-        // let gen_start = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
-        let (sess, key, message) = arbitary_path_gen(*path_length, OURS_BRANCH);
-        // let gen_end = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
-        // println!("Path gentime: {:?}", gen_end - gen_start);
-
-        let trace_start = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
-        let path = traceback::tracing(MsgReport::new(key, message.clone()), &sess.receiver);
-        let trace_end = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
-
-        println!("Path runtime: {:?}", trace_end - trace_start);
-        assert_eq!(path.len() as u32, path_length - 1);
-
-        let mut conn = redis_pack::connect().unwrap();
-        let _: () = redis::cmd("FLUSHDB").query(&mut conn).unwrap();
-    }
-
-    fn test_tracing_in_abitary_tree(depth: &u32, branch_factor: &u32, size: &u32) {
-
-        // let gen_start = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
-        let (sess, key, message) = arbitary_tree_gen(*depth, *branch_factor);
-        // let gen_end = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
-        // println!("Tree gentime: {:?}", gen_end - gen_start);
-
-        let trace_start = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
-        let path = traceback::tracing(MsgReport::new(key, message.clone()), &sess.receiver);
-        let trace_end = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
-        println!("Tree runtime: {:?}", trace_end - trace_start);
-
-        assert_eq!(path.len() as u32, *size);
-
-        let mut db_conn = redis_pack::connect().unwrap();
-        let _: () = redis::cmd("FLUSHDB").query(&mut db_conn).unwrap();
+        for i in 0..loop_index {
+            test_tracing_in_abitary_path(&path_length);
+            test_tracing_in_abitary_tree(&depth, &branch_factor, &fwd_tree_edges);
+        }
     }
 
     #[bench]
@@ -347,6 +317,42 @@ mod tests {
 
         let mut conn = redis_pack::connect().unwrap();
         let _: () = redis::cmd("FLUSHDB").query(&mut conn).unwrap();
+    }
+
+    fn test_tracing_in_abitary_path(path_length: &u32) {
+
+        // let gen_start = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+        let (sess, key, message) = arbitary_path_gen(*path_length, OURS_BRANCH);
+        // let gen_end = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+        // println!("Path gentime: {:?}", gen_end - gen_start);
+
+        let trace_start = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+        let path = traceback::tracing(MsgReport::new(key, message.clone()), &sess.receiver);
+        let trace_end = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+
+        println!("Path runtime: {:?}", trace_end - trace_start);
+        assert_eq!(path.len() as u32, path_length - 1);
+
+        let mut conn = redis_pack::connect().unwrap();
+        let _: () = redis::cmd("FLUSHDB").query(&mut conn).unwrap();
+    }
+
+    fn test_tracing_in_abitary_tree(depth: &u32, branch_factor: &u32, size: &u32) {
+
+        // let gen_start = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+        let (sess, key, message) = arbitary_tree_gen(*depth, *branch_factor);
+        // let gen_end = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+        // println!("Tree gentime: {:?}", gen_end - gen_start);
+
+        let trace_start = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+        let path = traceback::tracing(MsgReport::new(key, message.clone()), &sess.receiver);
+        let trace_end = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+        println!("Tree runtime: {:?}", trace_end - trace_start);
+
+        assert_eq!(path.len() as u32, *size);
+
+        let mut db_conn = redis_pack::connect().unwrap();
+        let _: () = redis::cmd("FLUSHDB").query(&mut db_conn).unwrap();
     }
 
     // generate a path
@@ -637,7 +643,6 @@ mod tests {
         let path_2: Vec<u32> = vec![1029, 789, 12];
         let mut keys_2 = fwd_path_gen(keys_1.get(1).unwrap(), &message, &path_2, &sid_map);
 
-        // TODO: debug, bwd_search problem.
         // Path 3: 6-8
         let path_3: Vec<u32> = vec![789, 9987];
         let mut keys_3 = fwd_path_gen(keys_2.get(1).unwrap(), &message, &path_3, &sid_map);
