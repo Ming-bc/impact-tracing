@@ -48,6 +48,57 @@ pub mod bloom_filter {
         let mut conn = BLOOM.get_connection().unwrap();
         redis::cmd("bf.mexists").arg(BF_NAME).arg(keys).query(&mut conn).unwrap()
     }
+
+    pub fn pipe_mexists_auto_cut(keys: &mut Vec<String>) -> Vec<bool> {
+        let mut conn = BLOOM.get_connection().unwrap();
+        let mut pipe = redis::Pipeline::new();
+
+        let mut result: Vec<bool> = Vec::new();
+        let mut threshold = 5000;
+        while keys.len() > threshold {
+            let store_keys = keys.split_off( keys.len() - threshold);
+            let command = redis::cmd("bf.mexists").arg(BF_NAME).arg(store_keys).to_owned();
+            pipe.add_command(command);
+        }
+        if keys.len() > 0 {
+            let command = redis::cmd("bf.mexists").arg(BF_NAME).arg(keys.to_owned()).to_owned();
+            pipe.add_command(command);
+        }
+
+        let query_result_vec: Vec<Vec<bool>> = pipe.query(&mut conn).unwrap();
+
+        for i in 0..query_result_vec.len() {
+            result.extend(query_result_vec.get(query_result_vec.len() - i - 1).unwrap());
+        }
+        result
+    }
+// TODO: put mexists_pack into forward search
+    pub fn mexists_pack(pack_keys: &Vec<Vec<String>>) -> Vec<Vec<bool>> {
+        let mut pack_result: Vec<Vec<bool>> = Vec::new();
+        let mut pack_keys_length: Vec<usize> = Vec::new();
+        let mut query_keys: Vec<String> = Vec::new();
+
+        for keys in pack_keys {
+            pack_keys_length.push(keys.len());
+            for k in keys {
+                query_keys.push(k.to_string());
+            }
+        }
+
+        let mut query_result: Vec<bool> = pipe_mexists_auto_cut(&mut query_keys);
+
+        let mut count_bool: usize = 0;
+        for i in 0..pack_keys_length.len(){
+            let mut result: Vec<bool> = Vec::new();
+            for j in 0..*pack_keys_length.get(i).unwrap() {
+                result.push(*query_result.get(count_bool + j).unwrap());
+            }
+            count_bool += *pack_keys_length.get(i).unwrap();
+            pack_result.push(result);
+        }
+
+        pack_result
+    }
 }
 
 pub mod redis_pack {
@@ -158,6 +209,31 @@ pub mod redis_pack {
         }
         sessions
     }
+// TODO: auto cut in 100000
+    pub fn pipe_query_users(uids: &Vec<u32>) -> Vec<Vec<Session>> {
+        let mut conn = REDIS.get_connection().unwrap();
+        let mut pipe = redis::Pipeline::new();
+
+        for uid in uids {
+            let command = redis::cmd("HGETALL").arg(uid).to_owned();
+            pipe.add_command(command);
+        }
+        let query_result: Vec<Vec<String>> = pipe.query(&mut conn).unwrap();
+
+        let mut result: Vec<Vec<Session>> = Vec::new();
+        for i in 0..query_result.len() {
+            let uid_key = query_result.get(i).unwrap();
+            let mut uid_result: Vec<Session> = Vec::new();
+            for j in 0..(uid_key.len()/2) {
+                let sid = uid_key.get(2*j+1).unwrap();
+                let sender: u32 = *uids.get(i).unwrap();
+                let receiver: u32 = uid_key.get(2*j).unwrap().parse().unwrap();
+                uid_result.push(Session::new(sid.clone(), sender, receiver));
+            }
+            result.push(uid_result);
+        }
+        result
+    }
 
 }
 
@@ -232,6 +308,42 @@ pub mod tests {
         }
     }
 
+    #[test]
+    fn test_bf_pipe_mexists() {
+        let mut pack_val: Vec<Vec<String>> = Vec::new();
+        for j in 0..3 {
+            let mut values: Vec<String> = Vec::new();
+            for i in 0..3 {
+                let bytes = rand::random::<[u8; 32]>();
+                let key = encode(&bytes[..]);
+                values.push(key);
+            }
+            assert!(bloom_filter::madd(&values).is_ok());
+            pack_val.push(values);
+        }
+
+        pack_val.push(vec![12.to_string(), 15.to_string(), 13.to_string()]);
+        
+        let result = bloom_filter::mexists_pack(&pack_val);
+println!("{:?}", result);
+    }
+
+    #[bench]
+    fn bf_pipe_mexists(b: &mut Bencher) {
+        let mut pack_val: Vec<Vec<String>> = Vec::new();
+        for j in 0..3 {
+            let mut values: Vec<String> = Vec::new();
+            for i in 0..3 {
+                let bytes = rand::random::<[u8; 32]>();
+                let key = encode(&bytes[..]);
+                values.push(key);
+            }
+            assert!(bloom_filter::madd(&values).is_ok());
+            pack_val.push(values);
+        }
+        
+        b.iter(|| bloom_filter::mexists_pack(&pack_val));
+    }
     
     #[test]
     fn test_redis_pipe_query_sid() {
@@ -249,7 +361,7 @@ pub mod tests {
     }
 
     #[bench]
-    fn bench_bloom_filter_query(b: &mut Bencher) {
+    fn bench_bloom_filter_exist(b: &mut Bencher) {
         let bytes = random::<[u8; 32]>();
         assert!(bloom_filter::add(&bytes).is_ok());
         b.iter(|| bloom_filter::exists(&bytes));
@@ -258,7 +370,7 @@ pub mod tests {
     #[bench]
     fn bench_bloom_filter_mexists(b: &mut Bencher) {
         let mut tags: Vec<String> = Vec::new();
-        for i in 0..10 {
+        for i in 0..1 {
             let bytes: [u8; 32] = random::<[u8; 32]>();
             let tag: String = encode(&bytes[..]).clone();
             assert!(bloom_filter::add(&bytes).is_ok());

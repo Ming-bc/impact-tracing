@@ -120,10 +120,11 @@ pub mod algos{
 
 #[cfg(test)]
 mod tests {
-    // extern crate test;
-    // use rand::random;
+    extern crate test;
+  
     use crate::tool::utils::{encipher, decipher};
     use crate::tool::algos;
+    use test::Bencher;
 
     // fn init_logger() {
     //     //env_logger::init();
@@ -147,6 +148,14 @@ mod tests {
         let new_key = algos::next_key(&key, &bk);
         let old_key = algos::prev_key(&new_key, &bk);
         assert_eq!(key, old_key);
+    }
+
+    #[bench]
+    fn bench_enc(b: &mut Bencher) {
+        let message = rand::random::<[u8; 16]>();
+        let key = rand::random::<[u8; 16]>();
+        
+        b.iter(|| encipher(&key,&message));
     }
 
 }
