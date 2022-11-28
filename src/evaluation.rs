@@ -177,7 +177,7 @@ mod tests {
 
     #[test]
     fn test_fwd_tree_gen () {
-        let fwd_tree_size: u32 = 500;
+        let fwd_tree_size: u32 = 5000;
         let message = base64::encode(&rand::random::<[u8; 16]>()[..]);
         let start = rand::random::<u32>();
         let root = rand::random::<u32>();
@@ -197,7 +197,7 @@ println!("Tree gentime: {:?}", gen_end - gen_start);
         let report_md = tree_md.get(tree_md.len()-1).unwrap();
 
 let trace_start = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
-        let path = traceback::packed_tracing(MsgReport::new(report_md.key, message.clone()), &report_md.uid);
+        let path = traceback::tracing(MsgReport::new(report_md.key, message.clone()), &report_md.uid);
 let trace_end = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
 println!("Tree runtime: {:?}", trace_end - trace_start);
 

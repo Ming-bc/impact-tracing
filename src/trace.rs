@@ -39,7 +39,6 @@ pub mod traceback {
 
         for sess in &sessions {
             // bwd tag
-// println!("query {} to {} is {}", sess.sender, sess.receiver, sess.id);
             let bk = <&[u8; 16]>::try_from(&decode(sess.id.clone()).unwrap()[..]).unwrap().clone();
             let bwd_tag = store_tag_gen(&sess.sender, &md.key, &bk, msg_bytes);
             // fwd tag
@@ -62,7 +61,7 @@ pub mod traceback {
                 let prev_key = algos::prev_key(&md.key, &bk);
                 source = TraceData::new(sess.sender, prev_key);
                 // TODO: this break might be a problem when the first user is the source, so we ignore it in here
-                // break;
+                break;
             }
         }
 
@@ -77,103 +76,7 @@ pub mod traceback {
         (source, receivers)
     }
 
-    pub fn forward_search(msg: &str, md: TraceData) -> Vec<TraceData> {
-        let mut result = Vec::new();
-        let sessions = redis_pack::query_users(&md.uid, FwdType::Send);
-        let binding = decode(msg).unwrap();
-        let msg_bytes = <&[u8]>::try_from(&binding[..]).unwrap();
-
-        let mut tags_tbt: Vec<String> = Vec::new();
-        let mut next_key_set: Vec<[u8; 16]> = Vec::new();
-
-        for sess in &sessions {
-            let bk = <&[u8; 16]>::try_from(&decode(sess.id.clone()).unwrap()[..]).unwrap().clone();
-            let next_key = algos::next_key(&md.key, &bk);
-            let tag = store_tag_gen(&sess.sender, &next_key, &bk, msg_bytes);
-
-            next_key_set.push(next_key);
-            tags_tbt.push(encode(&tag[..]));
-        }
-
-        let bf_result = bloom_filter::mexists(&tags_tbt);
-        for i in 0..bf_result.len() {
-            if *bf_result.get(i).unwrap() == true {
-                let sess = sessions.get(i).unwrap();
-                let next_key = next_key_set.get(i).unwrap();
-                result.push(TraceData {uid: sess.receiver, key: *next_key})
-            }
-        }
-
-        // return empty vector, when found not one.
-        result
-    }
-
-    pub fn tracing(report: MsgReport, snd_start: &u32) -> Vec<Edge>{
-        let mut path: Vec<Edge> = Vec::new();
-        let mut current_sender= TraceData { uid: *snd_start, key: report.key };
-        let mut rcv_set: Vec<TraceData> = Vec::new();
-        let mut searched_rcv: HashSet<String> = HashSet::new();
-
-        while (current_sender.uid != 0) | (rcv_set.is_empty() == false) {
-            let mut snd_to_rcvs: Vec<TraceData> = Vec::new();
-            // Search the previous node of the sender
-            if current_sender.uid != 0 {
-                let prev_sender: TraceData;
-                (prev_sender, snd_to_rcvs) = backward_search(&report.payload, TraceData { uid: current_sender.uid, key: current_sender.key });
-                if prev_sender.uid != 0 {
-                    path.push(Edge::new(prev_sender.uid, current_sender.uid.clone()));
-                }
-
-                // searched or not
-                for i in 0..snd_to_rcvs.len() {
-                    let rcv = snd_to_rcvs.get(i).unwrap();
-                    if searched_rcv.contains(&rcv.hash()) {
-                        snd_to_rcvs.remove(i);
-                    }
-                    else {
-                        path.push(Edge::new(current_sender.uid, snd_to_rcvs.get(i).unwrap().uid))
-                    }
-                }
-                searched_rcv.insert(current_sender.hash());
-                current_sender = TraceData::from(prev_sender);
-            }
-
-            // Search the receivers of the message
-            let rcv_len_at_begin = rcv_set.len();
-            if rcv_set.is_empty() == false {
-                let mut outside_set: Vec<TraceData> = Vec::new();
-                for out_td in &rcv_set {
-                    let mut inside_set = forward_search(&report.payload, TraceData { uid: out_td.uid, key: out_td.key });
-                    // searched or not ?
-                    for i in 0..inside_set.len() {
-                        let rcv = inside_set.get(i).unwrap();
-                        if searched_rcv.contains(&rcv.hash()) {
-                            inside_set.remove(i);
-                        }
-                    }
-                    // if first found, then put in path
-                    if inside_set.is_empty() == false {
-                        for in_td in & inside_set {
-                            path.push(Edge::new(out_td.uid, in_td.uid))
-                        }
-                        outside_set.extend(inside_set);
-                    }
-                }
-                rcv_set.extend(outside_set);
-            }
-            
-            rcv_set.extend(snd_to_rcvs);
-            // pop the receivers that already search
-            let mut prev_rcv_set = rcv_set;
-            rcv_set = prev_rcv_set.split_off(rcv_len_at_begin);
-            for user in prev_rcv_set {
-                searched_rcv.insert(user.hash());
-            }
-        }
-        path
-    }
-
-    pub fn packed_fwd_search(msg: &str, md: &Vec<TraceData>) -> Vec<Vec<TraceData>> {
+    pub fn forward_search(msg: &str, md: &Vec<TraceData>) -> Vec<Vec<TraceData>> {
         let binding = decode(msg).unwrap();
         let msg_bytes = <&[u8]>::try_from(&binding[..]).unwrap();
         let mut result: Vec<Vec<TraceData>> = Vec::new();
@@ -224,7 +127,7 @@ pub mod traceback {
         result
     }
 
-    pub fn packed_tracing(report: MsgReport, snd_start: &u32) -> Vec<Edge>{
+    pub fn tracing(report: MsgReport, snd_start: &u32) -> Vec<Edge>{
         let mut path: Vec<Edge> = Vec::new();
         let mut current_sender= TraceData { uid: *snd_start, key: report.key };
         let mut rcv_set: Vec<TraceData> = Vec::new();
@@ -259,7 +162,7 @@ pub mod traceback {
             if rcv_set.is_empty() == false {
                 let mut outside_set: Vec<TraceData> = Vec::new();
 
-                let bf_results = packed_fwd_search(&report.payload, &rcv_set);
+                let bf_results = forward_search(&report.payload, &rcv_set);
 
                 for i in 0..bf_results.len() {
                     let mut inside_set: Vec<TraceData> = bf_results.get(i).unwrap().to_vec();
@@ -361,8 +264,8 @@ mod tests {
         let (users, keys, message) = path_cases_2();
         let report_key = keys.get(1).unwrap();
         // Search this message from middle node
-        let result = traceback::forward_search(&message, TraceData::new(*users.get(2).unwrap(), *report_key));
-        assert_eq!(result.get(0).unwrap().uid, *users.get(3).unwrap());
+        let result = traceback::forward_search(&message, &vec![TraceData::new(*users.get(2).unwrap(), *report_key)]);
+        assert_eq!(result.get(0).unwrap().get(0).unwrap().uid, *users.get(3).unwrap());
 
         // let mut conn = redis_pack::connect().unwrap();
         // let _: () = redis::cmd("FLUSHDB").query(&mut conn).unwrap();
@@ -406,8 +309,7 @@ println!("Gen finish");
         let report_md = tree_md.get(report_index).unwrap();
 
         let trace_start = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
-        // let path = traceback::packed_tracing(MsgReport::new(key, message.clone()), &sess.receiver);
-        let path = traceback::packed_tracing(MsgReport::new(report_md.key, message.clone()), &report_md.uid);
+        let path = traceback::tracing(MsgReport::new(report_md.key, message.clone()), &report_md.uid);
         let trace_end = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
         println!("Tree runtime: {:?}", trace_end - trace_start);
         assert_eq!(path.len() as u32, fwd_tree_edges);
@@ -457,7 +359,7 @@ println!("Gen finish");
         let (users, keys, message) = path_cases_2();
         let report_key = keys.get(1).unwrap();
         // Search this message from middle node
-        b.iter(|| traceback::forward_search(&message, TraceData::new(*users.get(2).unwrap(), *report_key)));
+        b.iter(|| traceback::forward_search(&message, &vec![TraceData::new(*users.get(2).unwrap(), *report_key)]));
     }
 
     #[bench]
@@ -480,7 +382,7 @@ println!("Gen finish");
         // println!("Path gentime: {:?}", gen_end - gen_start);
 
         let trace_start = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
-        let path = traceback::packed_tracing(MsgReport::new(key, message.clone()), &sess.receiver);
+        let path = traceback::tracing(MsgReport::new(key, message.clone()), &sess.receiver);
         let trace_end = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
 
         println!("Path runtime: {:?}", trace_end - trace_start);
@@ -498,7 +400,7 @@ println!("Gen finish");
         // println!("Tree gentime: {:?}", gen_end - gen_start);
 
         let trace_start = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
-        let path = traceback::packed_tracing(MsgReport::new(key, message.clone()), &sess.receiver);
+        let path = traceback::tracing(MsgReport::new(key, message.clone()), &sess.receiver);
         let trace_end = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
         println!("Tree runtime: {:?}", trace_end - trace_start);
 
