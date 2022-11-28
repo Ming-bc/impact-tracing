@@ -73,8 +73,8 @@ pub mod messaging {
     }
 
     impl Session {
-        pub fn new (sid: String, snd_id: u32, rcv_id: u32) -> Self {
-            Session { id: sid, sender: snd_id, receiver: rcv_id }
+        pub fn new (sid: &String, snd_id: &u32, rcv_id: &u32) -> Self {
+            Session { id: sid.clone(), sender: snd_id.clone(), receiver: rcv_id.clone() }
         }
         
         pub fn show (&self) {
@@ -130,7 +130,7 @@ pub mod messaging {
     // report_msg:
     pub fn sub_report(tag_key: &[u8;16], message: &str, sender: u32, receiver: u32) -> (MsgReport, Session) {
         let sid = " ";
-        (MsgReport { key: *tag_key, payload: message.to_string()}, Session::new(sid.to_string(), sender, receiver))
+        (MsgReport { key: *tag_key, payload: message.to_string()}, Session::new(&sid.to_string(), &sender, &receiver))
     }
 
     pub fn vrf_report(sess: Session, report: MsgReport) -> bool {
@@ -192,7 +192,7 @@ mod tests {
         let msg_str = encode(&message[..]);
         let tag_key = rand::random::<[u8; 16]>();
         let packet = MsgPacket::new(&tag_key, &msg_str);
-        let sess = Session::new(0.to_string(), snd_id, rcv_id);
+        let sess = Session::new(&0.to_string(), &snd_id, &rcv_id);
         assert!(proc_msg(sess, packet), "Proc failed");
         let (report, sess_sub) = sub_report(&tag_key, &encode(&message[..]), snd_id, rcv_id);
         assert!(vrf_report(sess_sub, report), "Verify failed");
@@ -221,11 +221,10 @@ mod tests {
         let snd_id: u32 = 2806396777;
         let rcv_id: u32 = 259328394;
 
-        let message = rand::random::<[u8; 16]>();
-        let msg_str = encode(&message[..]);
+        let message = encode(&rand::random::<[u8; 16]>()[..]);
         let tag_key = rand::random::<[u8; 16]>();
 
-        b.iter(|| proc_msg(Session::new(0.to_string(), snd_id, rcv_id), MsgPacket::new(&tag_key, &msg_str)));
+        b.iter(|| proc_msg(Session::new(&0.to_string(), &snd_id, &rcv_id), MsgPacket::new(&tag_key, &message)));
     }
 
     #[bench]

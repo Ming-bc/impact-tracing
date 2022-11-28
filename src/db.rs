@@ -205,7 +205,7 @@ pub mod redis_pack {
                     receiver = users.get(2*i).unwrap().parse().unwrap();
                 }
             }
-            sessions.push(Session::new(sid.clone(), sender, receiver));
+            sessions.push(Session::new(&sid, &sender, &receiver));
         }
         sessions
     }
@@ -228,7 +228,7 @@ pub mod redis_pack {
                 let sid = uid_key.get(2*j+1).unwrap();
                 let sender: u32 = *uids.get(i).unwrap();
                 let receiver: u32 = uid_key.get(2*j).unwrap().parse().unwrap();
-                uid_result.push(Session::new(sid.clone(), sender, receiver));
+                uid_result.push(Session::new(&sid, &sender, &receiver));
             }
             result.push(uid_result);
         }
@@ -299,9 +299,9 @@ pub mod tests {
         let receiver = random::<u32>();
         let bytes = rand::random::<[u8; 16]>();
         let sid = encode(&bytes[..]);
-        let ses = Session::new(sid, sender, receiver);
+        let ses = Session::new(&sid, &sender, &receiver);
 
-        redis_pack::add(&vec![ses]).ok().unwrap();
+        redis_pack::pipe_add(&vec![ses]).ok().unwrap();
         let mut users = redis_pack::query_users(&sender, FwdType::Send);
         for u in &mut users {
             assert_eq!(receiver, u.receiver);
@@ -351,9 +351,9 @@ println!("{:?}", result);
         let receiver = random::<u32>();
         let bytes = rand::random::<[u8; 16]>();
         let sid = encode(&bytes[..]);
-        let ses = Session::new(sid.clone(), sender, receiver);
+        let ses = Session::new(&sid, &sender, &receiver);
 
-        redis_pack::add(&vec![ses]).ok().unwrap();
+        redis_pack::pipe_add(&vec![ses]).ok().unwrap();
         let result = redis_pack::pipe_query_sid(&vec!(Edge::new(sender, receiver)));
         for res in result {
             assert_eq!(sid, res);
@@ -386,9 +386,9 @@ println!("{:?}", result);
         let receiver = random::<u32>();
         let bytes = rand::random::<[u8; 16]>();
         let sid = encode(&bytes[..]);
-        let ses = Session::new(sid, sender, receiver);
+        let ses = Session::new(&sid, &sender, &receiver);
 
-        redis_pack::add(&vec![ses]).ok().unwrap();
+        redis_pack::pipe_add(&vec![ses]).ok().unwrap();
 
         b.iter(|| redis_pack::query_users(&sender, FwdType::Send));
     }
@@ -399,9 +399,9 @@ println!("{:?}", result);
         let receiver = random::<u32>();
         let bytes = rand::random::<[u8; 16]>();
         let sid = encode(&bytes[..]);
-        let ses = Session::new(sid, sender, receiver);
+        let ses = Session::new(&sid, &sender, &receiver);
 
-        redis_pack::add(&vec![ses]).ok().unwrap();
+        redis_pack::pipe_add(&vec![ses]).ok().unwrap();
         b.iter(|| redis_pack::query_sid(&sender, &receiver));
     }
 
