@@ -46,10 +46,10 @@ pub mod eval {
             let rand_type: u16 = rand::random::<u16>() % 100;
             
             match rand_type {
-                0..=5 => tp = TreeNodeType::ActiveFwd,
-                6..=10 => tp = TreeNodeType::InactiveFwd,
-                11..=20 => tp = TreeNodeType::ActiveUser,
-                21..=100 => tp = TreeNodeType::InactiveUser,
+                0..=100 => tp = TreeNodeType::ActiveFwd,
+                // 3..=8 => tp = TreeNodeType::InactiveFwd,
+                // 9..=15 => tp = TreeNodeType::ActiveUser,
+                // 16..=100 => tp = TreeNodeType::InactiveUser,
                 _ => tp = TreeNodeType::InactiveUser,
             }
 
@@ -62,20 +62,25 @@ pub mod eval {
             let conn_size: usize;
             match tp {
                 TreeNodeType::ActiveFwd => {
-                    conn_size = Self::random_size_val(10, 20);
-                    fwd_size = Self::random_size_val(5, 15) % 10;
+                    conn_size = Self::random_size_val(0, 20);
+                    let size = Self::random_size_val(0, 5);
+                    if size > conn_size {fwd_size = conn_size} else {fwd_size = size};
                 },
                 TreeNodeType::InactiveFwd => {
                     conn_size = Self::random_size_val(10, 20);
-                    fwd_size = Self::random_size_val(0, conn_size as u16) % 5;
+                    let size = Self::random_size_val(0, conn_size as u16);
+                    if size > 5 {fwd_size = 5} else {fwd_size = size};
                 },
                 TreeNodeType::ActiveUser => {
                     conn_size = Self::random_size_val(5, 15);
-                    fwd_size = Self::random_size_val(4, conn_size as u16) % 8;
+                    let size = Self::random_size_val(0, conn_size as u16);
+                    if size > 5 {fwd_size = 5} else {fwd_size = size};
                 },
                 TreeNodeType::InactiveUser => {
-                    conn_size = Self::random_size_val(0, 15);
-                    fwd_size = Self::random_size_val(0, conn_size as u16) % 5;
+                    conn_size = Self::random_size_val(0, 10);
+                    let size = Self::random_size_val(0, conn_size as u16);
+                    // if size > 5 {fwd_size = 5} else {fwd_size = size};
+                    fwd_size = size % 3;
                 },
             }
             (fwd_size, conn_size)
@@ -93,56 +98,73 @@ pub mod eval {
         }
     }
 
-    pub fn fwd_tree_gen (start_key: &[u8; 16], root_id: &u32, root_tp: &TreeNode, message: &str, md_tr: &mut Vec<TraceData>, sess_tr: &mut Vec<Session>, fwd_tree_size: &u32) {
-        if md_tr.len() < (fwd_tree_size + 1) as usize {
+    pub fn fwd_tree_gen (start_key: &[u8; 16], root_id: &u32, root_tp: &TreeNode, message: &str, depth: &u32, depth_limit: &u32) -> (Vec<TraceData>, Vec<Session>, Vec<String>) {
+        let mut tree_md: Vec<TraceData> = Vec::new();
+        let mut tree_sess: Vec<Session> = Vec::new();
+        let mut tree_tag: Vec<String> = Vec::new();
+        if depth < depth_limit {
             for i in 0..root_tp.fwd_size {
                 let receiver: u32 = rand::random::<u32>();
                 let rcv_tp: TreeNode = TreeNode::random();
                 let sid = encode(&rand::random::<[u8; 16]>()[..]);
-                sess_tr.push(Session::new(&sid, root_id, &receiver));
+                tree_sess.push(Session::new(&sid, root_id, &receiver));
 
                 let bk = &base64::decode(sid).unwrap()[..];
-                let packet = fwd_edge_gen(*start_key, message, root_id, &receiver, bk);
-                md_tr.push(TraceData::new(receiver, packet.key));
+                let (packet, tag) = fwd_edge_gen(*start_key, message, root_id, &receiver, bk);
 
-                sess_tr.extend(fake_receivers(root_id, &root_tp.conn_size));
+                tree_tag.push(tag);
+                tree_md.push(TraceData::new(receiver, packet.key));
+                tree_sess.extend(fake_receivers(root_id, &(root_tp.conn_size - root_tp.fwd_size)));
 
-                fwd_tree_gen(&packet.key, &receiver, &rcv_tp, message, md_tr, sess_tr, fwd_tree_size);
+                let nxt_depth = *depth + 1;
+                let (sub_tree_md, sub_tree_sess, sub_tree_tag) = fwd_tree_gen(&packet.key, &receiver, &rcv_tp, message, &nxt_depth, depth_limit);
+
+                tree_md.extend(sub_tree_md);
+                tree_sess.extend(sub_tree_sess);
+                tree_tag.extend(sub_tree_tag);
+            }
+        }
+        (tree_md, tree_sess, tree_tag)
+    }
+
+    fn write_tag_to_bf(sess:Session, packet: MsgPacket){
+        let store_tag = store_tag_gen(sess, packet);
+
+        let op = bloom_filter::madd(&vec![store_tag.clone()]);
+        match op.is_ok() {
+            true => {}
+            false => {
+                println!("False tag: {}", store_tag);
+                panic!("process failed.");
             }
         }
     }
 
-    fn write_tag_to_bf(sess:Session, packet: MsgPacket) -> bool {
+    fn store_tag_gen(sess:Session, packet: MsgPacket) -> String {
         let sid = sess.id;
         let bk = <&[u8; 16]>::try_from(&decode(sid).unwrap()[..]).unwrap().clone();
-        let store_tag = algos::proc_tag(&sess.sender, &bk, &packet.tag);
-        bloom_filter::add(&store_tag).is_ok()
+        encode(algos::proc_tag(&sess.sender, &bk, &packet.tag))
     }
-
     // generate a new edge from a sender to a receiver
     pub fn new_edge_gen(message: &str, sender: &u32, receiver: &u32) -> MsgPacket {
         let sid = base64::encode(&rand::random::<[u8; 16]>()[..]);
         let sess = Session::new(&sid, &sender, &receiver);
-        let _ = redis_pack::add(&vec![sess]);
+        let _ = redis_pack::pipe_add(&mut vec![sess]);
 
         let bk = &base64::decode(sid).unwrap()[..];
         let bk_16 = <&[u8; 16]>::try_from(bk).unwrap();
         let sess = Session::new( &encode(bk_16), sender, receiver);
-        while write_tag_to_bf( sess, MsgPacket::new(&bk_16, message) ) != true {
-            panic!("process failed.");
-        }
+        write_tag_to_bf( sess, MsgPacket::new(&bk_16, message) );
         messaging::new_msg(bk_16, message)
     }
     
     // generate a forward edge from a sender to a receiver
-    fn fwd_edge_gen(prev_key: [u8; 16], message: &str, sender: &u32, receiver: &u32, bk: &[u8]) -> MsgPacket {
+    fn fwd_edge_gen(prev_key: [u8; 16], message: &str, sender: &u32, receiver: &u32, bk: &[u8]) -> (MsgPacket, String) {
         let bk_16 = <&[u8; 16]>::try_from(bk).unwrap();
         let sess = Session::new( &encode(bk_16), sender, receiver);
         let packet = messaging::fwd_msg(&prev_key, &vec![*bk_16], message, FwdType::Receive);
-        while write_tag_to_bf(sess, MsgPacket::new(&packet.key, message)) != true {
-            panic!("process failed.");
-        }
-        packet
+        let tag = store_tag_gen(sess, MsgPacket::new(&packet.key, message));
+        (packet, tag)
     }
 
     fn fake_receivers (sender: &u32, num: &usize) -> Vec<Session> {
@@ -164,7 +186,7 @@ mod tests {
     use crate::evaluation::eval::*;
     use crate::trace::traceback::{self, TraceData};
     use crate::message::messaging::{MsgReport, Session};
-    use crate::db::redis_pack;
+    use crate::db::{redis_pack,bloom_filter};
     use std::time::{SystemTime, Duration, UNIX_EPOCH};
     use crate::visualize::display;
 
@@ -177,33 +199,29 @@ mod tests {
 
     #[test]
     fn test_fwd_tree_gen () {
-        let fwd_tree_size: u32 = 5000;
+        let tree_depth: u32 = 5;
         let message = base64::encode(&rand::random::<[u8; 16]>()[..]);
         let start = rand::random::<u32>();
         let root = rand::random::<u32>();
         let root_packet = new_edge_gen(&message, &start, &root);
-        println!("TreeGen start");
 
-        let mut tree_md: Vec<TraceData> = Vec::new();
-        let mut tree_sess: Vec<Session> = Vec::new();
 let gen_start = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
-        fwd_tree_gen(&root_packet.key, &root, &TreeNode::new_from_tp(TreeNodeType::ActiveFwd), &message, &mut tree_md, &mut tree_sess, &fwd_tree_size);
-println!("FwdTree size: {}", tree_md.len());
-println!("SearchTree size: {}", tree_sess.len());
-        let _ = redis_pack::pipe_add_auto_cut(&mut tree_sess);
+        let (tree_md, mut tree_sess, tree_tag) = fwd_tree_gen(&root_packet.key, &root, &TreeNode::new_from_tp(TreeNodeType::ActiveFwd), &message, &(0 as u32), &tree_depth);
 let gen_end = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
 println!("Tree gentime: {:?}", gen_end - gen_start);
+println!("FwdTree size: {}\nSearchTree size: {}", tree_md.len(), tree_sess.len());
+
+        let _ = redis_pack::pipe_add(&mut tree_sess);
+        let _ = bloom_filter::madd(&tree_tag);
 
         let report_md = tree_md.get(tree_md.len()-1).unwrap();
-
 let trace_start = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
         let path = traceback::tracing(MsgReport::new(report_md.key, message.clone()), &report_md.uid);
 let trace_end = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
 println!("Tree runtime: {:?}", trace_end - trace_start);
+        assert_eq!(tree_md.len(), path.len());
 
-        assert_eq!(path.len(), tree_md.len());
-
-        display::path_to_dot(&path);
+        display::path_to_dot(&path, &tree_depth);
 
         let mut db_conn = redis_pack::connect().unwrap();
         let _: () = redis::cmd("FLUSHDB").query(&mut db_conn).unwrap();

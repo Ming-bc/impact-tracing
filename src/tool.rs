@@ -113,7 +113,7 @@ pub mod algos{
             let bytes_to_str = encode(&bytes[..]);
             tag_str.push(bytes_to_str);
         }
-        bloom_filter::mexists(&tag_str)
+        bloom_filter::mexists(&mut tag_str)
     }
 
 }
@@ -125,6 +125,7 @@ mod tests {
     use crate::tool::utils::{encipher, decipher};
     use crate::tool::algos;
     use test::Bencher;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     // fn init_logger() {
     //     //env_logger::init();
@@ -145,9 +146,24 @@ mod tests {
     fn next_prev_key() {
         let key = rand::random::<[u8; 16]>();
         let bk = rand::random::<[u8; 16]>();
+let first = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
         let new_key = algos::next_key(&key, &bk);
+let second = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+println!("Runtime {:?}", second - first);
         let old_key = algos::prev_key(&new_key, &bk);
         assert_eq!(key, old_key);
+    }
+
+    #[test]
+    fn test_tag_gen() {
+        let uid = rand::random::<u32>();
+        let message = rand::random::<[u8; 16]>();
+        let key = rand::random::<[u8; 16]>();
+        let bk = rand::random::<[u8; 16]>();
+let first = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+        algos::store_tag_gen(&uid, &key, &bk, &message);
+let second = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+println!("Runtime {:?}", second - first);
     }
 
     #[bench]
@@ -156,6 +172,24 @@ mod tests {
         let key = rand::random::<[u8; 16]>();
         
         b.iter(|| encipher(&key,&message));
+    }
+
+    #[bench]
+    fn bench_next_key(b: &mut Bencher) {
+        let key = rand::random::<[u8; 16]>();
+        let bk = rand::random::<[u8; 16]>();
+
+        b.iter(|| test::black_box(algos::next_key(&key, &bk)));
+    }
+
+    #[bench]
+    fn bench_tag_gen(b: &mut Bencher) {
+        let uid = rand::random::<u32>();
+        let message = rand::random::<[u8; 16]>();
+        let key = rand::random::<[u8; 16]>();
+        let bk = rand::random::<[u8; 16]>();
+
+        b.iter(|| test::black_box(algos::store_tag_gen(&uid, &key, &bk, &message)));
     }
 
 }

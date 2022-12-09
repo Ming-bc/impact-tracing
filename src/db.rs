@@ -1,5 +1,3 @@
-
-
 pub mod bloom_filter {
     extern crate redis;
     extern crate base64;
@@ -44,12 +42,7 @@ pub mod bloom_filter {
         redis::cmd("bf.exists").arg(BF_NAME).arg(msg).query(&mut conn).unwrap()
     }
 
-    pub fn mexists(keys: &Vec<String>) -> Vec<bool> {
-        let mut conn = BLOOM.get_connection().unwrap();
-        redis::cmd("bf.mexists").arg(BF_NAME).arg(keys).query(&mut conn).unwrap()
-    }
-
-    pub fn pipe_mexists_auto_cut(keys: &mut Vec<String>) -> Vec<bool> {
+    pub fn mexists(keys: &mut Vec<String>) -> Vec<bool> {
         let mut conn = BLOOM.get_connection().unwrap();
         let mut pipe = redis::Pipeline::new();
 
@@ -72,7 +65,7 @@ pub mod bloom_filter {
         }
         result
     }
-// TODO: put mexists_pack into forward search
+
     pub fn mexists_pack(pack_keys: &Vec<Vec<String>>) -> Vec<Vec<bool>> {
         let mut pack_result: Vec<Vec<bool>> = Vec::new();
         let mut pack_keys_length: Vec<usize> = Vec::new();
@@ -85,7 +78,7 @@ pub mod bloom_filter {
             }
         }
 
-        let mut query_result: Vec<bool> = pipe_mexists_auto_cut(&mut query_keys);
+        let mut query_result: Vec<bool> = mexists(&mut query_keys);
 
         let mut count_bool: usize = 0;
         for i in 0..pack_keys_length.len(){
@@ -124,20 +117,12 @@ pub mod redis_pack {
     }
 
     pub fn connect() -> redis::RedisResult<Connection> {
-        Ok(REDIS.get_connection()?)
-    }
-
-    pub fn add(sessions: &Vec<Session>) -> redis::RedisResult<()> {
-        for sess in sessions {
-            let mut conn = REDIS.get_connection().unwrap();
-            let _ : () = conn.hset(sess.sender, sess.receiver, sess.id.clone())?;
-            let _ : () = conn.hset(sess.receiver, sess.sender, sess.id.clone())?;
-        }
-        Ok(())
+        let redis_client = REDIS.get_connection();
+        Ok(redis_client?)
     }
 
     // write BRANCH users at one time
-    pub fn pipe_add(sessions: &Vec<Session>) -> redis::RedisResult<()> {
+    pub fn add(sessions: &Vec<Session>) -> redis::RedisResult<()> {
         let client = redis::Client::open(REDIS_IP).unwrap();
         let mut conn = client.get_connection().unwrap();
         let mut pipe = redis::Pipeline::new();
@@ -156,7 +141,43 @@ pub mod redis_pack {
         Ok(())
     }
 
-    pub fn pipe_add_auto_cut(sess:&mut Vec<Session>) -> redis::RedisResult<()> {
+    fn from_vec_to_u8_array<T>(v: Vec<T>) -> [T; 16] {
+        let boxed_slice = v.into_boxed_slice();
+        let boxed_array: Box<[T; 16]> = match boxed_slice.try_into() {
+            Ok(ba) => ba,
+            Err(o) => panic!("Expected a Vec of length {} but it was {}", 16, o.len()),
+        };
+        *boxed_array
+    }
+
+    pub fn empty(){
+        let mut db_conn = connect().unwrap();
+        let _: () = redis::cmd("FLUSHDB").query(&mut db_conn).unwrap();
+    }
+
+    // write BRANCH users at one time
+    pub fn add_as_bytes(sessions: &Vec<Session>) -> redis::RedisResult<()> {
+        let mut conn = REDIS.get_connection().unwrap();
+        // pipe sender to receivers
+        for sess in sessions {
+            let sender = sess.sender;
+            let receiver = sess.receiver;
+            let key: [u8;16] = from_vec_to_u8_array(decode(sess.id.clone()).unwrap());
+            redis::cmd("HSET").arg(sender).arg(receiver).arg(&key).query(&mut conn)?;
+            redis::cmd("HSET").arg(receiver).arg(sender).arg(&key).query(&mut conn)?;
+        }
+        Ok(())
+    }
+
+    pub fn query_sid_as_bytes(sender: &u32, receiver: &u32) -> String {
+        let mut conn = REDIS.get_connection().unwrap();
+        let mut key: [u8; 16] = Default::default();
+        let mut result: Vec<u8> = conn.hget(sender, receiver).unwrap();
+        key.copy_from_slice(&result);
+        encode(key)
+    }
+
+    pub fn pipe_add(sess:&mut Vec<Session>) -> redis::RedisResult<()> {
         let mut conn = REDIS.get_connection().unwrap();
         let mut pipe = redis::Pipeline::new();
         let mut threshold = 100000;
@@ -164,9 +185,9 @@ pub mod redis_pack {
         while sess.len() > threshold {
             let length = sess.len();
             let store_sess = sess.split_off(length - threshold);
-            let _ = pipe_add(&store_sess);
+            let _ = add(&store_sess);
         }
-        pipe_add(sess)
+        add(sess)
     }
 
     pub fn query_sid(sender: &u32, receiver: &u32) -> String {
@@ -209,6 +230,20 @@ pub mod redis_pack {
         }
         sessions
     }
+
+    pub fn query_users_receive(uid: &u32) -> Vec<Session> {    
+        let mut conn = REDIS.get_connection().unwrap();    
+        let users: Vec<String> = conn.hgetall(*uid).unwrap();
+        // TODO: optimize
+        let mut sessions: Vec<Session> = Vec::new();
+        for i in 0..(users.len()/2) {
+            let sid = users.get(2*i+1).unwrap();
+            let sender = users.get(2*i).unwrap().parse().unwrap();
+            let receiver= *uid;
+            sessions.push(Session::new(&sid, &sender, &receiver));
+        }
+        sessions
+    }
 // TODO: auto cut in 100000
     pub fn pipe_query_users(uids: &Vec<u32>) -> Vec<Vec<Session>> {
         let mut conn = REDIS.get_connection().unwrap();
@@ -244,13 +279,14 @@ pub mod tests {
     extern crate redis;
     extern crate test;
 
-    use base64::encode;
+    use base64::{encode, decode};
     // extern crate test;
     use rand::random;
     use test::Bencher;
     use redis::ConnectionLike;
     use crate::db::{bloom_filter, redis_pack};
     use crate::message::messaging::{Session, FwdType, Edge};
+    use std::time::{SystemTime, Duration, UNIX_EPOCH};
 
     // fn init_logger() {
     //     //env_logger::init();
@@ -289,7 +325,7 @@ pub mod tests {
             values.push(key);
         }
         assert!(bloom_filter::madd(&values).is_ok());
-        bloom_filter::mexists(&values);
+        bloom_filter::mexists(&mut values);
     }
 
 
@@ -301,7 +337,7 @@ pub mod tests {
         let sid = encode(&bytes[..]);
         let ses = Session::new(&sid, &sender, &receiver);
 
-        redis_pack::pipe_add(&vec![ses]).ok().unwrap();
+        redis_pack::pipe_add(&mut vec![ses]).ok().unwrap();
         let mut users = redis_pack::query_users(&sender, FwdType::Send);
         for u in &mut users {
             assert_eq!(receiver, u.receiver);
@@ -353,7 +389,7 @@ println!("{:?}", result);
         let sid = encode(&bytes[..]);
         let ses = Session::new(&sid, &sender, &receiver);
 
-        redis_pack::pipe_add(&vec![ses]).ok().unwrap();
+        redis_pack::pipe_add(&mut vec![ses]).ok().unwrap();
         let result = redis_pack::pipe_query_sid(&vec!(Edge::new(sender, receiver)));
         for res in result {
             assert_eq!(sid, res);
@@ -377,7 +413,7 @@ println!("{:?}", result);
             tags.push(tag);
         }
 
-        b.iter(|| bloom_filter::mexists(&tags));
+        b.iter(|| bloom_filter::mexists(&mut tags));
     }
 
     #[bench]
@@ -388,9 +424,12 @@ println!("{:?}", result);
         let sid = encode(&bytes[..]);
         let ses = Session::new(&sid, &sender, &receiver);
 
-        redis_pack::pipe_add(&vec![ses]).ok().unwrap();
+        redis_pack::pipe_add(&mut vec![ses]).ok().unwrap();
 
         b.iter(|| redis_pack::query_users(&sender, FwdType::Send));
+
+        let mut db_conn = redis_pack::connect().unwrap();
+        let _: () = redis::cmd("FLUSHDB").query(&mut db_conn).unwrap();
     }
 
     #[bench]
@@ -401,8 +440,26 @@ println!("{:?}", result);
         let sid = encode(&bytes[..]);
         let ses = Session::new(&sid, &sender, &receiver);
 
-        redis_pack::pipe_add(&vec![ses]).ok().unwrap();
+        redis_pack::pipe_add(&mut vec![ses]).ok().unwrap();
         b.iter(|| redis_pack::query_sid(&sender, &receiver));
+    }
+
+    #[test]
+    fn bench_redis_query_sid_as_bytes() {
+        let sender = random::<u32>();
+        let receiver = random::<u32>();
+        let bytes = rand::random::<[u8; 16]>();
+        let sid = encode(&bytes[..]);
+        let ses = Session::new(&sid, &sender, &receiver);
+
+        redis_pack::add(&mut vec![ses]).ok().unwrap();
+
+        let trace_start = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+        println!("Set {}, get {}", sid, redis_pack::query_sid_as_bytes(&sender, &receiver));
+        let trace_end = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+        println!("Query runtime: {:?}", trace_end - trace_start);
+
+        redis_pack::empty();
     }
 
 }

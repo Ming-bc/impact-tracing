@@ -25,7 +25,7 @@ pub mod display {
         (refined_users, refined_edges)
     }
 
-    pub fn path_to_dot(path: &Vec<Edge>) {
+    pub fn path_to_dot(path: &Vec<Edge>, start: &u32) {
         let mut graph = Graph::<usize, i32>::new();
         let map = path_to_hmap(path);
 
@@ -38,16 +38,12 @@ pub mod display {
             let receiver = path.get(i).unwrap().receiver;
             graph.add_edge(NodeIndex::from(*map.get(&sender).unwrap()), NodeIndex::from(*map.get(&receiver).unwrap()), 0);
         }
-        
+        // println!("{:?}",  Dot::with_config(&graph, &[Config::EdgeNoLabel]));
+
         // Write to file
         let mut f = File::create("python/example.dot").unwrap();
-        let output = format!("{}", Dot::with_config(&graph, &[Config::EdgeNoLabel]));
+        let output = format!("{}", Dot::with_config(&graph, &[Config::EdgeNoLabel, Config::NodeNoLabel]));
         let _ = f.write_all(&output.as_bytes());
-
-        // Compute depth
-        let finish_node = NodeIndex::from((path.len() - 1) as u32);
-        let (_, path) = astar(&graph, NodeIndex::from(0), |finish| finish == finish_node, |_| 0, |_| 0).unwrap();
-        println!("Depth: {}", path.len());
     }
 
     pub fn path_to_hmap(path: &Vec<Edge>) -> HashMap<u32, u32> {
@@ -64,5 +60,13 @@ pub mod display {
             }
         }
         sess_map
+    }
+
+    pub fn compute_depth(start: &u32, finish: &u32, graph: &Graph<usize, i32>) -> usize {
+        // Compute depth
+        let finish_node = NodeIndex::from(*finish);
+        let start_node = NodeIndex::from(*start);
+        let (_, path) = astar(&graph, start_node, |finish| finish == finish_node, |_| 0, |_| 0).expect("Not found a path.");
+        path.len()
     }
 }
