@@ -103,8 +103,6 @@ pub mod redis_pack {
     use base64::{encode,decode};
     use lazy_static::lazy_static;
     use crate::message::messaging::{Session, FwdType, Edge};
-    use std::time::Duration;
-    use std::thread;
 
     const REDIS_IP: &str = "redis://localhost:6389/";
 

@@ -73,12 +73,15 @@ pub mod traceback {
     }
 
     pub fn par_backward_search(msg: &str, md: TraceData) -> (TraceData, Vec<TraceData>) {
+let part_1 = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
         let sessions = redis_pack::query_users_receive(&md.uid);
+let part_2 = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
         let uid = Arc::new(md.uid);
         let key = Arc::new(md.key);
         let message = Arc::new(msg.to_string());
         let par_tags: Arc<Mutex<HashMap<usize, String>>> = Arc::new(Mutex::new(HashMap::new()));
         let par_next_keys: Arc<Mutex<HashMap<usize, [u8;16]>>> = Arc::new(Mutex::new(HashMap::new()));
+// TODO: list different parts, and analysis their efficiency.
         let mut thread_list = Vec::new();
         for i in 0..sessions.len() {
             let lock_uid = Arc::clone(&uid);
@@ -108,7 +111,9 @@ pub mod traceback {
 
         let mut bf_tags_vec: Vec<String> = tag_hmap_to_vec_in_squence(&tags_hmap);
         let mut bf_next_key_vec: Vec<[u8; 16]> = hmap_to_vec_in_squence(&next_key_hmap);
+let part_3 = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
         let bf_result = bloom_filter::mexists(&mut bf_tags_vec);
+let part_4 = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
         let mut source: TraceData = TraceData::new(0, md.key);
         let mut receivers: Vec<TraceData> = Vec::new();
 
@@ -130,6 +135,11 @@ pub mod traceback {
                 receivers.push(TraceData {uid: sess.sender, key: *next_key})
             }
         }
+let part_5 = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+// print!("Part 1: {:?}, ", part_2 - part_1);
+// print!("Part 2: {:?}, ", part_3 - part_2);
+// print!("Part 3: {:?}, ", part_4 - part_3);
+// print!("Part 4: {:?}.\n", part_5 - part_4);
         (source, receivers)
     }
 
@@ -391,7 +401,9 @@ mod tests {
     extern crate base64;
     extern crate test;
 
+    use core::time;
     use std::collections::{HashMap, HashSet};
+    use std::thread;
 
     use base64::encode;
     use rand;
@@ -511,8 +523,8 @@ println!("Gen finish");
 
     #[test]
     fn test_tracing_in_path_and_tree () {
-        let loop_index: usize = 1;
-        let depth: u32 = 9;
+        let loop_index: usize = 3;
+        let depth: u32 = 10;
         let branch_factor: u32 = 3;
 
         let (fwd_tree_edges, search_tree_size) = tree_edge_compute(depth, branch_factor);
@@ -522,10 +534,8 @@ println!("Gen finish");
         print!("Search size: {}; ", search_tree_size - 1);
         print!("Path length: {}; \n", path_length);
 
-        for _i in 0..loop_index {
-            test_tracing_in_abitary_path(&path_length);
-            // test_tracing_in_abitary_tree(&depth, &branch_factor, &fwd_tree_edges);
-        }
+        test_tracing_in_abitary_path(&path_length, &loop_index);
+        // test_tracing_in_abitary_tree(&depth, &branch_factor, &fwd_tree_edges, &loop_index);
     }
 
     #[bench]
@@ -565,33 +575,37 @@ println!("Gen finish");
         let _: () = redis::cmd("FLUSHDB").query(&mut conn).unwrap();
     }
 
-    fn test_tracing_in_abitary_path(path_length: &u32) {
+    fn test_tracing_in_abitary_path(path_length: &u32, loop_index: &usize) {
         let (sess, key, message) = arbitary_path_gen(*path_length, OURS_BRANCH);
 
-        let trace_start = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
-        let path = traceback::tracing(MsgReport::new(key, message.clone()), &sess.receiver);
-        let trace_end = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
-
-        println!("Path runtime: {:?}", trace_end - trace_start);
-        assert_eq!(path.len() as u32, path_length - 1);
+        for _i in 0..*loop_index {
+            let trace_start = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+            let path = traceback::tracing(MsgReport::new(key, message.clone()), &sess.receiver);
+            let trace_end = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+    
+            println!("Path runtime: {:?}", trace_end - trace_start);
+            assert_eq!(path.len() as u32, path_length - 1);
+            thread::sleep(time::Duration::from_millis(1000));
+        }
 
         redis_pack::empty();
     }
 
-    fn test_tracing_in_abitary_tree(depth: &u32, branch_factor: &u32, size: &u32) {
+    fn test_tracing_in_abitary_tree(depth: &u32, branch_factor: &u32, size: &u32, loop_index: &usize) {
 
         // let gen_start = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
         let (sess, key, message, trace_md) = arbitary_tree_gen(*depth, *branch_factor);
         // let gen_end = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
         // println!("Tree gentime: {:?}", gen_end - gen_start);
-
-        let trace_start = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
-        let path = traceback::tracing(MsgReport::new(key, message.clone()), &sess.receiver);
-        let trace_end = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
-        println!("Tree runtime: {:?}", trace_end - trace_start);
-
-        assert_eq!(path.len() as u32, *size);
-
+        for _i in 0..*loop_index {
+            let trace_start = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+            let path = traceback::tracing(MsgReport::new(key, message.clone()), &sess.receiver);
+            let trace_end = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+            println!("Tree runtime: {:?}", trace_end - trace_start);
+    
+            assert_eq!(path.len() as u32, *size);
+            thread::sleep(time::Duration::from_millis(1000));
+        }
         redis_pack::empty();
     }
 
@@ -785,7 +799,7 @@ println!("Gen finish");
                 let u_2 = length + u_1 + j + 1;
                 sess_of_user.push(u_2);
             }
-            padding_sessions.extend(mock_rows_star(&sess_of_user));
+            // padding_sessions.extend(mock_rows_star(&sess_of_user));
         }
         let fwd_sessions = mock_rows_line(&users);
         (fwd_sessions, padding_sessions, users)

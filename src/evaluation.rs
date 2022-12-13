@@ -46,9 +46,9 @@ pub mod eval {
             let rand_type: u16 = rand::random::<u16>() % 100;
             
             match rand_type {
-                0..=100 => tp = TreeNodeType::ActiveFwd,
-                // 3..=8 => tp = TreeNodeType::InactiveFwd,
-                // 9..=15 => tp = TreeNodeType::ActiveUser,
+                0..=50 => tp = TreeNodeType::ActiveFwd,
+                51..=60 => tp = TreeNodeType::InactiveFwd,
+                61..=100 => tp = TreeNodeType::ActiveUser,
                 // 16..=100 => tp = TreeNodeType::InactiveUser,
                 _ => tp = TreeNodeType::InactiveUser,
             }
@@ -67,14 +67,14 @@ pub mod eval {
                     if size > conn_size {fwd_size = conn_size} else {fwd_size = size};
                 },
                 TreeNodeType::InactiveFwd => {
-                    conn_size = Self::random_size_val(10, 20);
+                    conn_size = Self::random_size_val(0, 20);
                     let size = Self::random_size_val(0, conn_size as u16);
-                    if size > 5 {fwd_size = 5} else {fwd_size = size};
+                    if size > 2 {fwd_size = size % 2} else {fwd_size = size};
                 },
                 TreeNodeType::ActiveUser => {
-                    conn_size = Self::random_size_val(5, 15);
+                    conn_size = Self::random_size_val(0, 20);
                     let size = Self::random_size_val(0, conn_size as u16);
-                    if size > 5 {fwd_size = 5} else {fwd_size = size};
+                    if size > 1 {fwd_size = 1} else {fwd_size = size};
                 },
                 TreeNodeType::InactiveUser => {
                     conn_size = Self::random_size_val(0, 10);
@@ -199,7 +199,7 @@ mod tests {
 
     #[test]
     fn test_fwd_tree_gen () {
-        let tree_depth: u32 = 5;
+        let tree_depth: u32 = 50;
         let message = base64::encode(&rand::random::<[u8; 16]>()[..]);
         let start = rand::random::<u32>();
         let root = rand::random::<u32>();
