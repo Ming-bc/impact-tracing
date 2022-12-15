@@ -223,7 +223,7 @@ println!("Tree runtime: {:?}", trace_end - trace_start);
 
         display::path_to_dot(&path, &tree_depth);
 
-        let mut db_conn = redis_pack::connect().unwrap();
+        let mut db_conn = redis_pack::get_redis_conn().unwrap();
         let _: () = redis::cmd("FLUSHDB").query(&mut db_conn).unwrap();
     }
 }

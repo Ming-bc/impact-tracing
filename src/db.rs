@@ -19,31 +19,31 @@ pub mod bloom_filter {
         redis::Client::open(BF_IP).unwrap()
     }
 
-    pub fn connect() -> redis::RedisResult<Connection> {
+    pub fn get_bf_conn() -> redis::RedisResult<Connection> {
         Ok(BLOOM.get_connection()?)
     }
 
     pub fn add(bytes: &[u8; 32]) -> redis::RedisResult<()> {
-        let mut conn = BLOOM.get_connection().unwrap();
+        let mut conn = get_bf_conn().unwrap();
         let msg = encode(&bytes[..]);
         let _ : () = redis::cmd("bf.add").arg(BF_NAME).arg(msg).query(&mut conn)?;
         Ok(())
     }
 
     pub fn madd(keys: &Vec<String>) -> redis::RedisResult<()> {
-        let mut conn = BLOOM.get_connection().unwrap();
+        let mut conn = get_bf_conn().unwrap();
         let _ : () = redis::cmd("bf.madd").arg(BF_NAME).arg(keys).query(&mut conn)?;
         Ok(())
     }
     
     pub fn exists(bytes: &[u8; 32]) -> bool {
-        let mut conn = BLOOM.get_connection().unwrap();
+        let mut conn = get_bf_conn().unwrap();
         let msg = encode(&bytes[..]);
         redis::cmd("bf.exists").arg(BF_NAME).arg(msg).query(&mut conn).unwrap()
     }
 
     pub fn mexists(keys: &mut Vec<String>) -> Vec<bool> {
-        let mut conn = BLOOM.get_connection().unwrap();
+        let mut conn = get_bf_conn().unwrap();
         let mut pipe = redis::Pipeline::new();
 
         let mut result: Vec<bool> = Vec::new();
@@ -107,22 +107,21 @@ pub mod redis_pack {
     const REDIS_IP: &str = "redis://localhost:6389/";
 
     lazy_static! {
-        pub static ref REDIS: redis::Client = create_redis_client();
+        pub static ref REDIS_CONN: redis::Client = create_redis_client();
     }
 
     fn create_redis_client() -> redis::Client {
         redis::Client::open(REDIS_IP).unwrap()
     }
 
-    pub fn connect() -> redis::RedisResult<Connection> {
-        let redis_client = REDIS.get_connection();
+    pub fn get_redis_conn() -> redis::RedisResult<Connection> {
+        let redis_client = REDIS_CONN.get_connection();
         Ok(redis_client?)
     }
 
     // write BRANCH users at one time
     pub fn add(sessions: &Vec<Session>) -> redis::RedisResult<()> {
-        let client = redis::Client::open(REDIS_IP).unwrap();
-        let mut conn = client.get_connection().unwrap();
+        let mut conn = get_redis_conn().unwrap();
         let mut pipe = redis::Pipeline::new();
 
         // pipe sender to receivers
@@ -149,13 +148,13 @@ pub mod redis_pack {
     }
 
     pub fn empty(){
-        let mut db_conn = connect().unwrap();
+        let mut db_conn = get_redis_conn().unwrap();
         let _: () = redis::cmd("FLUSHDB").query(&mut db_conn).unwrap();
     }
 
     // write BRANCH users at one time
     pub fn add_as_bytes(sessions: &Vec<Session>) -> redis::RedisResult<()> {
-        let mut conn = REDIS.get_connection().unwrap();
+        let mut conn = get_redis_conn().unwrap();
         // pipe sender to receivers
         for sess in sessions {
             let sender = sess.sender;
@@ -168,7 +167,7 @@ pub mod redis_pack {
     }
 
     pub fn query_sid_as_bytes(sender: &u32, receiver: &u32) -> String {
-        let mut conn = REDIS.get_connection().unwrap();
+        let mut conn = get_redis_conn().unwrap();
         let mut key: [u8; 16] = Default::default();
         let mut result: Vec<u8> = conn.hget(sender, receiver).unwrap();
         key.copy_from_slice(&result);
@@ -176,7 +175,7 @@ pub mod redis_pack {
     }
 
     pub fn pipe_add(sess:&mut Vec<Session>) -> redis::RedisResult<()> {
-        let mut conn = REDIS.get_connection().unwrap();
+        let mut conn = get_redis_conn().unwrap();
         let mut pipe = redis::Pipeline::new();
         let mut threshold = 100000;
 
@@ -189,12 +188,12 @@ pub mod redis_pack {
     }
 
     pub fn query_sid(sender: &u32, receiver: &u32) -> String {
-        let mut conn = REDIS.get_connection().unwrap();
+        let mut conn = get_redis_conn().unwrap();
         conn.hget(*sender, *receiver).unwrap()
     }
 
     pub fn pipe_query_sid(edges: &Vec<Edge>) -> Vec<String> {
-        let mut conn = REDIS.get_connection().unwrap();
+        let mut conn = get_redis_conn().unwrap();
         let mut pipe = redis::Pipeline::new();
         for sess in edges {
             let command = redis::cmd("HGET").arg(sess.sender).arg(sess.receiver).to_owned();
@@ -205,7 +204,7 @@ pub mod redis_pack {
     }
 
     pub fn query_users(uid: &u32, fwd_type: FwdType) -> Vec<Session> {    
-        let mut conn = REDIS.get_connection().unwrap();    
+        let mut conn = get_redis_conn().unwrap();
         let users: Vec<String> = conn.hgetall(*uid).unwrap();
         // TODO: optimize
         let mut sessions: Vec<Session> = Vec::new();
@@ -230,7 +229,7 @@ pub mod redis_pack {
     }
 
     pub fn query_users_receive(uid: &u32) -> Vec<Session> {    
-        let mut conn = REDIS.get_connection().unwrap();    
+        let mut conn = get_redis_conn().unwrap();
         let users: Vec<String> = conn.hgetall(*uid).unwrap();
         // TODO: optimize
         let mut sessions: Vec<Session> = Vec::new();
@@ -244,7 +243,7 @@ pub mod redis_pack {
     }
 // TODO: auto cut in 100000
     pub fn pipe_query_users(uids: &Vec<u32>) -> Vec<Vec<Session>> {
-        let mut conn = REDIS.get_connection().unwrap();
+        let mut conn = get_redis_conn().unwrap();
         let mut pipe = redis::Pipeline::new();
 
         for uid in uids {
@@ -294,14 +293,14 @@ pub mod tests {
     // utils test
     #[test]
     fn bf_is_open() {
-        let con = bloom_filter::connect().ok().unwrap();
+        let con = bloom_filter::get_bf_conn().ok().unwrap();
         // 测试是否成功连接Reids
         assert!(con.is_open());
     }
 
     #[test]
     fn redis_is_open() {
-        assert!(redis_pack::connect().is_ok());
+        assert!(redis_pack::get_redis_conn().is_ok());
     }
 
     #[test]
@@ -426,7 +425,7 @@ println!("{:?}", result);
 
         b.iter(|| redis_pack::query_users(&sender, FwdType::Send));
 
-        let mut db_conn = redis_pack::connect().unwrap();
+        let mut db_conn = redis_pack::get_redis_conn().unwrap();
         let _: () = redis::cmd("FLUSHDB").query(&mut db_conn).unwrap();
     }
 

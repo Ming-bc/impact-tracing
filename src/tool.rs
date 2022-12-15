@@ -103,7 +103,7 @@ pub mod algos{
 
     pub fn tag_exists(uid: &u32, key: &[u8; 16], bk: &[u8; 16], message: &[u8]) -> bool{
         let tag = store_tag_gen(uid, key, bk, message);
-        let mut conn = bloom_filter::connect().ok().unwrap();
+        let mut conn = bloom_filter::get_bf_conn().ok().unwrap();
         bloom_filter::exists(&tag)
     }
 
