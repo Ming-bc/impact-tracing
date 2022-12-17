@@ -46,9 +46,9 @@ pub mod eval {
             let rand_type: u16 = rand::random::<u16>() % 100;
             
             match rand_type {
-                0..=50 => tp = TreeNodeType::ActiveFwd,
-                51..=60 => tp = TreeNodeType::InactiveFwd,
-                61..=100 => tp = TreeNodeType::ActiveUser,
+                0..=100 => tp = TreeNodeType::ActiveFwd,
+                // 51..=60 => tp = TreeNodeType::InactiveFwd,
+                // 61..=100 => tp = TreeNodeType::ActiveUser,
                 // 16..=100 => tp = TreeNodeType::InactiveUser,
                 _ => tp = TreeNodeType::InactiveUser,
             }
@@ -62,8 +62,9 @@ pub mod eval {
             let conn_size: usize;
             match tp {
                 TreeNodeType::ActiveFwd => {
-                    conn_size = Self::random_size_val(0, 20);
-                    let size = Self::random_size_val(0, 5);
+                    // conn_size = Self::random_size_val(0, 20);
+                    conn_size = 10;
+                    let size = Self::random_size_val(0, 6);
                     if size > conn_size {fwd_size = conn_size} else {fwd_size = size};
                 },
                 TreeNodeType::InactiveFwd => {
@@ -196,10 +197,18 @@ mod tests {
             TreeNode::random().show();
         }
     }
-
+    
     #[test]
-    fn test_fwd_tree_gen () {
-        let tree_depth: u32 = 50;
+    fn test_random_tree() {
+        let depth: u32 = 12;
+        let loop_index: usize = 1;
+        let from_leaf: bool = false;
+        for _i in 0..loop_index {
+            random_tree_traceback(&depth, &from_leaf);
+        }
+    }
+
+    fn random_tree_traceback (tree_depth: &u32, from_leaf: &bool) {
         let message = base64::encode(&rand::random::<[u8; 16]>()[..]);
         let start = rand::random::<u32>();
         let root = rand::random::<u32>();
@@ -209,21 +218,29 @@ let gen_start = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
         let (tree_md, mut tree_sess, tree_tag) = fwd_tree_gen(&root_packet.key, &root, &TreeNode::new_from_tp(TreeNodeType::ActiveFwd), &message, &(0 as u32), &tree_depth);
 let gen_end = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
 println!("Tree gentime: {:?}", gen_end - gen_start);
-println!("FwdTree size: {}\nSearchTree size: {}", tree_md.len(), tree_sess.len());
+println!("FwdTree size: {}, SearchTree size: {}", tree_md.len(), tree_sess.len());
 
         let _ = redis_pack::pipe_add(&mut tree_sess);
         let _ = bloom_filter::madd(&tree_tag);
 
-        let report_md = tree_md.get(tree_md.len()-1).unwrap();
+        let leaf_report_md = tree_md.get(tree_md.len()-1).unwrap();
+        let root_report_md = tree_md.get(0).unwrap();
+        let mut path = Vec::new();
 let trace_start = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
-        let path = traceback::tracing(MsgReport::new(report_md.key, message.clone()), &report_md.uid);
+        if *from_leaf {
+            path = traceback::tracing(MsgReport::new(leaf_report_md.key, message.clone()), &leaf_report_md.uid);
+        }
+        else {
+            path = traceback::tracing(MsgReport::new(root_report_md.key, message.clone()), &root_report_md.uid);
+        }
 let trace_end = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
 println!("Tree runtime: {:?}", trace_end - trace_start);
         assert_eq!(tree_md.len(), path.len());
 
-        display::path_to_dot(&path, &tree_depth);
+        // display::path_to_dot(&path, &tree_depth);
 
         let mut db_conn = redis_pack::get_redis_conn().unwrap();
         let _: () = redis::cmd("FLUSHDB").query(&mut db_conn).unwrap();
     }
+
 }
