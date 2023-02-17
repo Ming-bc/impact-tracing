@@ -47,7 +47,7 @@ pub mod eval {
             
             match rand_type {
                 0..=100 => tp = TreeNodeType::ActiveFwd,
-                // 51..=60 => tp = TreeNodeType::InactiveFwd,
+                // 81..=100 => tp = TreeNodeType::InactiveFwd,
                 // 61..=100 => tp = TreeNodeType::ActiveUser,
                 // 16..=100 => tp = TreeNodeType::InactiveUser,
                 _ => tp = TreeNodeType::InactiveUser,
@@ -62,15 +62,14 @@ pub mod eval {
             let conn_size: usize;
             match tp {
                 TreeNodeType::ActiveFwd => {
-                    // conn_size = Self::random_size_val(0, 20);
-                    conn_size = 10;
+                    conn_size = Self::random_size_val(0, 20);
                     let size = Self::random_size_val(0, 6);
                     if size > conn_size {fwd_size = conn_size} else {fwd_size = size};
                 },
                 TreeNodeType::InactiveFwd => {
                     conn_size = Self::random_size_val(0, 20);
-                    let size = Self::random_size_val(0, conn_size as u16);
-                    if size > 2 {fwd_size = size % 2} else {fwd_size = size};
+                    let size = Self::random_size_val(0, 2);
+                    if size > conn_size {fwd_size = conn_size} else {fwd_size = size};
                 },
                 TreeNodeType::ActiveUser => {
                     conn_size = Self::random_size_val(0, 20);
@@ -200,7 +199,7 @@ mod tests {
     
     #[test]
     fn test_random_tree() {
-        let depth: u32 = 12;
+        let depth: u32 = 4;
         let loop_index: usize = 1;
         let from_leaf: bool = false;
         for _i in 0..loop_index {

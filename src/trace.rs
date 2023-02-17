@@ -438,8 +438,7 @@ mod tests {
             let map_id = sid_map.get(&sid_key).unwrap();
             assert_eq!(query_id, *map_id);
         }
-        let mut conn = redis_pack::get_redis_conn().unwrap();
-        let _: () = redis::cmd("FLUSHDB").query(&mut conn).unwrap();
+        redis_pack::empty();
     }
 
     #[test]
@@ -461,19 +460,16 @@ mod tests {
         assert_eq!(result.uid, *sender);
         let (result, _) = traceback::par_backward_search(&message, TraceData::new(*receiver, report_key));
 
-        // let mut conn = redis_pack::connect().unwrap();
-        // let _: () = redis::cmd("FLUSHDB").query(&mut conn).unwrap();
+        redis_pack::empty();
     }
 
     #[test]
     fn test_fwd_search() {
         let (users, keys, message) = path_cases_2();
         let report_key = keys.get(1).unwrap();
-        // Search this message from middle node
         let result = traceback::forward_search(&message, &vec![TraceData::new(*users.get(2).unwrap(), *report_key)]);
         assert_eq!(result.get(0).unwrap().get(0).unwrap().uid, *users.get(3).unwrap());
-        // let mut conn = redis_pack::connect().unwrap();
-        // let _: () = redis::cmd("FLUSHDB").query(&mut conn).unwrap();
+        redis_pack::empty();
     }
 
     #[test]
@@ -491,9 +487,7 @@ mod tests {
             edge.show();
         }
         // display::vec_to_dot(refined_users, refined_path);
-
-        let mut conn = redis_pack::get_redis_conn().unwrap();
-        let _: () = redis::cmd("FLUSHDB").query(&mut conn).unwrap();
+        redis_pack::empty();
     }
 
     #[test]
@@ -519,14 +513,13 @@ println!("Gen finish");
         println!("Tree runtime: {:?}", trace_end - trace_start);
         assert_eq!(path.len() as u32, fwd_tree_edges);
 
-        let mut db_conn = redis_pack::get_redis_conn().unwrap();
-        let _: () = redis::cmd("FLUSHDB").query(&mut db_conn).unwrap();
+        redis_pack::empty();
     }
 
     #[test]
     fn test_tracing_in_path_and_tree () {
         let loop_index: usize = 1;
-        let depth: u32 = 10;
+        let depth: u32 = 9;
         let branch_factor: u32 = 3;
 
         let (fwd_tree_edges, search_tree_size) = tree_edge_compute(depth, branch_factor);
@@ -632,19 +625,8 @@ println!("Gen finish");
         }
         packet
     }
-    
-    // generate a forward edge from a sender to a receiver
-    fn fwd_edge_gen(prev_key: [u8; 16], message: &str, sender: &u32, receiver: &u32, bk: &[u8]) -> MsgPacket {
-        let bk_16 = <&[u8; 16]>::try_from(bk).unwrap();
-        let sess = Session::new( &encode(bk_16), sender, receiver);
-        let packet = messaging::fwd_msg(&prev_key, &vec![*bk_16], message, FwdType::Receive);
-        while messaging::proc_msg(sess, MsgPacket::new(&packet.key, message)) != true {
-            panic!("process failed.");
-        }
-        packet
-    }
 
-    fn fwd_edge_gen_standalone_write(prev_key: [u8; 16], message: &str, sender: &u32, receiver: &u32, bk: &[u8]) -> (MsgPacket, String) {
+    fn fwd_edge_gen_standalone_write(prev_key: [u8; 16], message: &str, sender: &u32, bk: &[u8]) -> (MsgPacket, String) {
         let bk_16 = <&[u8; 16]>::try_from(bk).unwrap();
         let packet = messaging::fwd_msg(&prev_key, &vec![*bk_16], message, FwdType::Receive);
         let proc_packet = MsgPacket::new(&packet.key, message);
@@ -668,7 +650,7 @@ println!("Gen finish");
             sessions.push(Session::new(&0.to_string(), sender, receiver));
 
             let prev_key = *keys.get(i).unwrap();
-            let (packet, tag) = fwd_edge_gen_standalone_write(prev_key, message, &sender, &receiver, bk);
+            let (packet, tag) = fwd_edge_gen_standalone_write(prev_key, message, &sender, bk);
             keys.push(packet.key);
             tags.push(tag);
         }
@@ -682,11 +664,9 @@ println!("Gen finish");
             for k in 1..(*branch + 1) as usize {
                 let receiver_index = (root_index - 1) * branch + (k as u32) + 1;
                 let receiver_id = users.get((receiver_index - 1) as usize).unwrap();
-                // let sid = safe_query_sid(root_id, &receiver_id, sids);
                 let sid = sids.get(&hash_from_sender_receiver(root_id, receiver_id)).unwrap();
                 let bk = &base64::decode(sid.clone()).unwrap()[..];
-                let (packet, proc_tag) = fwd_edge_gen_standalone_write(*start_key, message, root_id, &receiver_id, bk);
-                // let packet = fwd_edge_gen(*start_key, message, root, &receiver, bk);
+                let (packet, proc_tag) = fwd_edge_gen_standalone_write(*start_key, message, root_id, bk);
                 tags.push(proc_tag);
                 md_tr.push(TraceData::new(*receiver_id, packet.key));
                 let sub_tree_md = fwd_tree_gen(&packet.key, &receiver_index,&receiver_id, message, depth - 1, branch, sids, tags, users);

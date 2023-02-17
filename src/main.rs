@@ -5,6 +5,7 @@ mod db;
 mod message;
 mod trace;
 mod visualize;
+mod simulation;
 mod evaluation;
 
 fn main() {
