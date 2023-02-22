@@ -98,17 +98,18 @@ pub mod utils {
         (fwd_graph, node_index)
     }
 
-    pub fn fuzzy_value_to_graph (origin_graph: &Graph<usize, usize>, values: HashMap<usize,f64>) -> Graph::<f64,()> {
-        let mut fuzzy_graph = Graph::<f64,()>::new();
+    pub fn fuzzy_value_to_graph (origin_graph: &Graph<usize, usize>, node_values: HashMap<usize,f64>, edge_values: HashMap<NodeIndex,f64>) -> Graph::<f64,f64> {
+        let mut fuzzy_graph = Graph::<f64,f64>::new();
         let mut hmap_old_new = HashMap::<NodeIndex,NodeIndex>::new();
         for (old_n, k) in origin_graph.node_references() {
-            let new_weight = values.get(k).unwrap();
-            let new_n = fuzzy_graph.add_node(*new_weight);
+            let new_weight = (*k as f64) + node_values.get(k).unwrap();
+            let new_n = fuzzy_graph.add_node(new_weight);
             hmap_old_new.insert(old_n, new_n);
         }
         for e in origin_graph.edge_indices() {
             let (st, end) = origin_graph.edge_endpoints(e).unwrap();
-            fuzzy_graph.add_edge(*hmap_old_new.get(&st).unwrap(), *hmap_old_new.get(&end).unwrap(), ());
+            let edge_weight = edge_values.get(&st).unwrap();
+            fuzzy_graph.add_edge(*hmap_old_new.get(&st).unwrap(), *hmap_old_new.get(&end).unwrap(), f64::trunc(edge_weight  * 100.0) / 100.0);
         }
         fuzzy_graph
     }
@@ -125,9 +126,9 @@ pub mod utils {
         let _ = f.write_all(&output.as_bytes());
     }
 
-    pub fn fuzzy_graph_to_dot (g: &Graph<f64, ()>, dir: String) {
+    pub fn fuzzy_graph_to_dot (g: &Graph<f64, f64>, dir: String) {
         let mut f = File::create(dir).unwrap();
-        let output = format!("{:?}", Dot::with_config(g, &[Config::EdgeNoLabel]));
+        let output = format!("{:?}", Dot::with_config(g, &[]));
         let _ = f.write_all(&output.as_bytes());
     }
 
@@ -299,7 +300,7 @@ pub mod fuzzy_traceback {
         }
     }
 
-    pub fn calc_fuzz_value (bwd_graph: &Graph::<usize,usize>, fpr: &f64, max_depth: &usize, trace_start_node: &NodeIndex, bwd_edge_list: &mut HashMap<(usize,usize),usize>, fwd_edge_list: &mut HashMap<(usize,usize),usize>, full_graph: &UnGraph::<usize,()>) -> HashMap::<usize, f64> {
+    pub fn calc_fuzz_value (bwd_graph: &Graph::<usize,usize>, fpr: &f64, max_depth: &usize, trace_start_node: &NodeIndex, bwd_edge_list: &mut HashMap<(usize,usize),usize>, fwd_edge_list: &mut HashMap<(usize,usize),usize>, full_graph: &UnGraph::<usize,()>) -> (HashMap::<usize, f64>, HashMap::<NodeIndex, f64>) {
         let mut nodes_fuzzy_value = HashMap::<usize, f64>::new();
         // remove backward edges from forward traces
         for kv in bwd_edge_list {
@@ -330,7 +331,6 @@ pub mod fuzzy_traceback {
         for n in fwd_graph.node_references() {
             calc_fwd_source_node_tpr(&n.0, &mut fwd_node_tpr, &fwd_graph);
         }
-
 
         // 3. Integrate FPRs of nodes in loop or fwd/bwd graph
         let mut node_tpr = HashMap::<usize, Vec<f64>>::new();
@@ -367,7 +367,7 @@ pub mod fuzzy_traceback {
             }
             nodes_fuzzy_value.insert(node, f64::trunc(value  * 100.0) / 100.0);
         }
-        nodes_fuzzy_value
+        (nodes_fuzzy_value, fwd_edge_fpr)
     }
 
     fn calc_node_tpr(is_bwd: &bool, max_depth: &usize, graph: &Graph<usize, usize>, edge_fpr: &HashMap<NodeIndex, f64>, node_fpr: &mut HashMap<NodeIndex, Vec<f64>>) {
@@ -395,9 +395,12 @@ pub mod fuzzy_traceback {
         else {
             let mut max_child_fpr: f64 = 0.0;
             for child in sub_graph.neighbors(*node) {
-                (!hmap_node_tpr.contains_key(&child)).then(||panic!("Curr {:?}, Child {:?}", sub_graph.node_weight(*node), sub_graph.node_weight(child)));
-                let child_fpr = hmap_node_tpr.get(&child).unwrap().last().unwrap();
-                (*child_fpr > max_child_fpr).then(|| max_child_fpr = *child_fpr);
+                let conn_edge = sub_graph.find_edge(*node, child).unwrap();
+                if *sub_graph.edge_weight(conn_edge).unwrap() == (weight + 1) {
+                    (!hmap_node_tpr.contains_key(&child)).then(||panic!("Curr {:?}, Child {:?}", sub_graph.node_weight(*node), sub_graph.node_weight(child)));
+                    let child_fpr = hmap_node_tpr.get(&child).unwrap().last().unwrap();
+                    (*child_fpr > max_child_fpr).then(|| max_child_fpr = *child_fpr);
+                }
             }
             node_tpr = 1.0 - *edge_fpr * (1.0 - max_child_fpr);
         }
@@ -421,7 +424,7 @@ pub mod fuzzy_traceback {
                     mlp_child_fpr *= 1.0 - hmap_node_tpr.get(&child).unwrap().last().unwrap();
                 }
             }
-            node_tpr = 1.0 - *edge_fpr * mlp_child_fpr;
+            node_tpr = 1.0 - (*edge_fpr) * mlp_child_fpr;
         }
         hmap_safe_insert(hmap_node_tpr, node, node_tpr);
     }
@@ -429,7 +432,7 @@ pub mod fuzzy_traceback {
     fn weighted_child_num(sub_graph: &Graph<usize, usize>, node: &NodeIndex, weight: &usize) -> usize {
         let mut num_child: usize = 0;
         for nbr in sub_graph.edges(*node){
-            (nbr.weight() == weight).then(|| num_child += 1);
+            (*nbr.weight() == (weight + 1)).then(|| num_child += 1);
         }
         num_child
     }
@@ -458,6 +461,9 @@ pub mod fuzzy_traceback {
             for i in 0..(out_degree + 1) {
                 let prob = binom_distrib.mass(i);
                 tpr += (((out_degree as f64) - (i as f64)) / (out_degree as f64)) * (prob / total_prob);
+            }
+            if (1.0 - tpr) == 0.0 {
+                println!("Edge fpr = 0; Outdegee {}, NBH {}", out_degree, nbh);
             }
             return 1.0 - tpr
         }
@@ -544,23 +550,23 @@ graph_to_dot(&fuzz_graph, "./output/fuzz_graph.dot".to_string());
     #[test]
     fn test_fuzz_ours() {
         let sys_graph = import_graph("./graphs/message.txt".to_string());
-        let trace_fpr: f32 = 0.015;
+        let trace_fpr: f32 = 0.01;
         let (fwd_graph, sys_fwd_map) = sir::sir_spread(&4, &0.06, &0.7, &sys_graph.clone());
 println!("Forward Graph: node {:?}, edge {:?}, mean degree: {:?}", fwd_graph.node_count(), fwd_graph.edge_count(), mean_degree(&fwd_graph, &sys_graph));
 graph_to_dot(&fwd_graph, "./output/fwd_graph.dot".to_string());
 
     let start_node = fuzzy_traceback::any_leaf(&fwd_graph);
-    let ((bwd_fuzz_graph, bwd_hmap, mut bwd_edge_list), (mut fwd_fuzz_graph, _, mut fwd_edge_list), max_depth) = fuzzy_trace_ours(&sys_graph, &fwd_graph, &sys_fwd_map, &start_node, &trace_fpr);
+    let ((bwd_fuz_graph, bwd_hmap, mut bwd_fuz_edge_list), (fwd_fuz_graph, _, mut fwd_fuz_edge_list), max_depth) = fuzzy_trace_ours(&sys_graph, &fwd_graph, &sys_fwd_map, &start_node, &trace_fpr);
 
-println!("Fuzzy bwd Graph: node {:?}, edge {:?}", bwd_fuzz_graph.node_count(), bwd_fuzz_graph.edge_count());
-weighted_graph_to_dot(&bwd_fuzz_graph, "./output/fuzz_bwd_graph.dot".to_string());
-println!("Fuzzy fwd Graph: node {:?}, edge {:?}", fwd_fuzz_graph.node_count(), fwd_fuzz_graph.edge_count());
-weighted_graph_to_dot(&fwd_fuzz_graph, "./output/fuzz_fwd_graph.dot".to_string());
+println!("Fuzzy bwd Graph: node {:?}, edge {:?}", bwd_fuz_graph.node_count(), bwd_fuz_graph.edge_count());
+weighted_graph_to_dot(&bwd_fuz_graph, "./output/fuzz_bwd_graph.dot".to_string());
+println!("Fuzzy fwd Graph: node {:?}, edge {:?}", fwd_fuz_graph.node_count(), fwd_fuz_graph.edge_count());
+weighted_graph_to_dot(&fwd_fuz_graph, "./output/fuzz_fwd_graph.dot".to_string());
 
     let start_in_bwd_graph = bwd_hmap.get(&(start_node.index() as usize)).unwrap();
-    let fuzzy_values = calc_fuzz_value(&bwd_fuzz_graph, &(trace_fpr as f64), &max_depth, start_in_bwd_graph, &mut bwd_edge_list, &mut fwd_edge_list, &sys_graph);
+    let (node_fuzzy_value, edge_fpr) = calc_fuzz_value(&bwd_fuz_graph, &(trace_fpr as f64), &max_depth, start_in_bwd_graph, &mut bwd_fuz_edge_list, &mut fwd_fuz_edge_list, &sys_graph);
 
-    let fuzzy_graph = fuzzy_value_to_graph(&fwd_fuzz_graph, fuzzy_values);
+    let fuzzy_graph = fuzzy_value_to_graph(&fwd_fuz_graph, node_fuzzy_value, edge_fpr);
     fuzzy_graph_to_dot(&fuzzy_graph, "./output/fuzz_graph.dot".to_string());
     }
 
