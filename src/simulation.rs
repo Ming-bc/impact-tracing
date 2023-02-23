@@ -160,31 +160,33 @@ pub mod sir {
         // Infective, recover or infect others
         for _t in 0..*round {
             let mut tbd_nodes = Vec::<NodeIndex>::new();
-            for n in sys_graph.node_references() {
-                if *(nodes_state.get(&n.0).unwrap()) == Condition::Infective {
+            let infected_nodes: Vec<NodeIndex> = sys_graph.node_indices().filter(|n| *(nodes_state.get(&n).unwrap()) == Condition::Infective).collect();
+            infected_nodes.iter().for_each(|n| {
+                // Infect neighbors
+                for nbr in sys_graph.neighbors(*n) {
                     let mut is_infected = false;
-                    // Infect neighbors
-                    for nbr in sys_graph.neighbors(n.0) {
-                        if *nodes_state.get(&nbr).unwrap() == Condition::Susceptible {
+                    match *nodes_state.get(&nbr).unwrap() {
+                        Condition::Susceptible => {
                             rand_state(s2i).then(||{
                                 tbd_nodes.push(nbr.clone());
                                 is_infected = true;
                             });
-                        }
-                        else {
-                            vec_edge_exists(&true, &edges_state, &nbr, &n.0).then(|| is_infected = rand_state(s2i));
-                        }
-                        (is_infected & vec_edge_exists(&true, &edges_state, &n.0, &nbr)).then(|| {
-                            edges_state.push((n.0.index(), nbr.index()));
-                            (!node_msg_source.contains_key(&nbr.index())).then(|| {
-                                node_msg_source.insert(nbr.index(), n.0.index());
-                            });
-                        });
+                        },
+                        _ => {
+                            vec_edge_exists(&true, &edges_state, &nbr, &n).then(|| is_infected = rand_state(s2i));
+                        },
                     }
-                    // Recover?
-                    rand_state(i2r).then(|| *(nodes_state.get_mut(&n.0).unwrap()) = Condition::Recovered);
+
+                    (is_infected & vec_edge_exists(&true, &edges_state, &n, &nbr)).then(|| {
+                        edges_state.push((n.index(), nbr.index()));
+                        (!node_msg_source.contains_key(&nbr.index())).then(|| {
+                            node_msg_source.insert(nbr.index(), n.index());
+                        });
+                    });
                 }
-            }
+                // Recover?
+                rand_state(i2r).then(|| *(nodes_state.get_mut(&n).unwrap()) = Condition::Recovered);
+            });
             tbd_nodes.iter().for_each(|&x| *(nodes_state.get_mut(&x).unwrap()) = Condition::Infective);
         }
         let t_output = vec_to_graph(&edges_state);
@@ -268,7 +270,10 @@ pub mod fuzzy_traceback {
         let mut next_nodes = Vec::<NodeIndex>::new();
         curr_nodes.iter().for_each(|node|{
             full_graph.neighbors(*node).for_each(|nbr| {
-                membership_test(is_bwd, index_map, &nbr, node, subgraph, fpr, depth, edge_list, searched_nodes, &mut next_nodes);
+                match is_bwd {
+                    true => membership_test(is_bwd, index_map, &nbr, &node, subgraph, fpr, depth, edge_list, searched_nodes, &mut next_nodes),
+                    false => membership_test(is_bwd, index_map, node, &nbr, subgraph, fpr, depth, edge_list, searched_nodes, &mut next_nodes),
+                }
             });
         });
         searched_nodes.append(curr_nodes);
@@ -546,7 +551,7 @@ mod tests {
         let dir = "./graphs/message.txt";
         let sys_graph = import_graph(dir.to_string());
 println!("{:?}, {:?}", sys_graph.node_count(), sys_graph.edge_count());
-        let (fwd_graph, _, _) = sir::sir_spread(&5, &0.06, &0.7, &sys_graph);
+        let (fwd_graph, _, _) = sir::sir_spread(&4, &0.04, &0.7, &sys_graph);
 println!("{:?}, {:?}", fwd_graph.node_count(), fwd_graph.edge_count());
 
         graph_to_dot(&fwd_graph, "output/fwd_graph.dot".to_string());
