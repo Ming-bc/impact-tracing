@@ -324,30 +324,13 @@ pub mod fuzzy_traceback {
         // 1. Compute FPR of all edges in bwd_graph and fwd_graph, repectively.
         let bwd_edge_fpr = calc_edge_fpr_with_src(&bwd_edge_list, &bwd_graph, full_graph, fpr);
         let fwd_edge_fpr = calc_edge_fpr_with_src(&fwd_edge_list, &fwd_graph, full_graph, fpr);
-// println!("Edge FPR \n{:?}\n", fwd_edge_fpr);
-// println!("Edge FPR {:?}\n", fwd_edge_fpr);
 
         // 2. Compute FPR of nodes in backward & forward graph
         let mut bwd_node_tpr = calc_node_tpr_with_src(&true, max_depth, fpr, &bwd_graph, &full_graph, &bwd_edge_fpr, &fwd_edge_list, &bwd_edge_list);
         bwd_node_tpr.insert((*trace_start_node, NodeIndex::from(usize::MAX as u32)), 1.0);
 
         let mut fwd_node_tpr = calc_node_tpr_with_src(&false, max_depth, fpr, &fwd_graph, &full_graph, &fwd_edge_fpr, &fwd_edge_list, &bwd_edge_list);
-        // TODO:
-        let mut fwd_src_node_tpr = calc_fwd_src_node_tpr(&fwd_edge_list, &mut fwd_node_tpr, &fwd_graph);
-// println!("Node TPR \n{:?}\n", fwd_node_tpr);
-
-        // // 2-3. sources in forward graph
-        // fwd_graph.node_references()
-        //     .filter(|(node, _)| 
-        //         fwd_graph.neighbors_directed(*node, Incoming).count() == 0)
-        //     .for_each(|(node, _)| {
-        //         let mut mul_child_fpr: f64 = 1.0;
-        //         fwd_graph.neighbors(node).into_iter().for_each(|child|
-        //             mul_child_fpr *= 1.0 - fwd_node_tpr.get(&(child,node)).unwrap()
-        //         );
-        //         let node_tpr = 1.0 - mul_child_fpr;
-        //         fwd_node_tpr.insert((node, NodeIndex::from(usize::MAX as u32)), node_tpr);
-        //     });
+        calc_fwd_src_node_tpr(&fwd_edge_list, &mut fwd_node_tpr, &fwd_graph);
 
         // // 3. Integrate FPRs of nodes in loop or fwd/bwd graph
         let mut node_tpr = HashMap::<usize, Vec<f64>>::new();
@@ -385,17 +368,6 @@ pub mod fuzzy_traceback {
         (nodes_fuzzy_value, fwd_edge_fpr)
     }
 
-    // fn calc_edge_fpr(sub_graph: &Graph<usize, usize>, full_graph: &UnGraph<usize, ()>, fpr: &f64) -> HashMap<NodeIndex, f64> {
-    //     let edge_fpr: HashMap::<NodeIndex, f64> = sub_graph
-    //         .node_references().into_iter()
-    //         .map(|(k,v)| {
-    //             let fpr = fpr_from_binom(&sub_graph.neighbors(k).count(), &full_graph.neighbors(NodeIndex::from(*v as u32)).count(), fpr);
-    //             (k, fpr)
-    //         })
-    //         .collect();
-    //     edge_fpr
-    // }
-
     fn calc_edge_fpr_with_src(edge_list: &HashMap<(usize,usize),(usize,usize)>, sub_graph: &Graph<usize, usize>, full_graph: &UnGraph<usize, ()>, fpr: &f64) -> HashMap<(usize,usize), f64> {
         // Edge fpr is defined by a tuple ((node, prev_node), fpr)
         let mut edge_fpr = HashMap::<(usize, usize), f64> ::new();
@@ -430,36 +402,6 @@ pub mod fuzzy_traceback {
         edge_fpr
     }
 
-    // fn integrate_node_tpr(fwd_graph: &Graph<usize, usize>, node_tpr: &mut HashMap<usize, Vec<f64>>, mut fwd_node_tpr: HashMap<NodeIndex, Vec<f64>>) {
-    //     fwd_graph.node_references().for_each(|n| {
-    //         match node_tpr.contains_key(n.1) {
-    //             true => {
-    //                 let tpr_list = node_tpr.get_mut(n.1).unwrap();
-    //                 tpr_list.append(fwd_node_tpr.get_mut(&n.0).unwrap());
-    //             },
-    //             false => {
-    //                 node_tpr.insert(*n.1, fwd_node_tpr.get_mut(&n.0).unwrap().clone());
-    //             },
-    //         }
-    //     });
-    // }
-
-    // fn calc_node_tpr(is_bwd: &bool, max_depth: &usize, graph: &Graph<usize, usize>, edge_fpr: &HashMap<NodeIndex, f64>) -> HashMap<NodeIndex, Vec<f64>> {
-    //     let mut node_fpr = HashMap::<NodeIndex, Vec<f64>>::new();
-    //     for d in 0..(*max_depth+1) {
-    //         graph.edge_indices().for_each(|e| {
-    //             if *graph.edge_weight(e).unwrap() == (max_depth - d) {
-    //                 let nodes = graph.edge_endpoints(e).unwrap();
-    //                 match is_bwd {
-    //                     true => calc_bwd_node_tpr(&nodes.0, &nodes.1, &(max_depth - d), &edge_fpr, &mut node_fpr, &graph),
-    //                     false => calc_fwd_node_tpr(&nodes.0, &nodes.1, &(max_depth - d), &edge_fpr, &mut node_fpr, &graph),
-    //                 }
-    //             }
-    //         });
-    //     }
-    //     node_fpr
-    // }
-
     fn calc_node_tpr_with_src(is_bwd: &bool, max_depth: &usize, fpr: &f64, sub_graph: &Graph<usize, usize>, full_graph: &UnGraph<usize,()>, edge_fpr: &HashMap<(usize,usize), f64>, fwd_edge_list: &HashMap<(usize, usize), (usize,usize)>, bwd_edge_list: &HashMap<(usize,usize),(usize,usize)>) -> HashMap<(NodeIndex,NodeIndex), f64> {
         let mut node_fpr = HashMap::<(NodeIndex,NodeIndex),f64>::new();
         for d in 0..(*max_depth+1) {
@@ -467,8 +409,8 @@ pub mod fuzzy_traceback {
                 if *sub_graph.edge_weight(e).unwrap() == (max_depth - d) {
                     let nodes = sub_graph.edge_endpoints(e).unwrap();
                     match is_bwd {
-                        true => calc_bwd_node_tpr_with_src(&nodes.0, &nodes.1, &edge_fpr, &mut node_fpr, &sub_graph, bwd_edge_list),
-                        false => calc_fwd_node_tpr_with_src(&nodes.0, &nodes.1, &fpr, &edge_fpr, &mut node_fpr, &sub_graph, full_graph, fwd_edge_list),
+                        true => calc_bwd_node_tpr(&nodes.0, &nodes.1, &edge_fpr, &mut node_fpr, &sub_graph, bwd_edge_list),
+                        false => calc_fwd_node_tpr(&nodes.0, &nodes.1, &fpr, &edge_fpr, &mut node_fpr, &sub_graph, full_graph, fwd_edge_list),
                     }
                 }
             });
@@ -476,7 +418,7 @@ pub mod fuzzy_traceback {
         node_fpr
     }
 
-    fn calc_bwd_node_tpr_with_src(par_node: &NodeIndex, node: &NodeIndex, edge_fpr: &HashMap::<(usize,usize),f64>, hmap_node_tpr: &mut HashMap<(NodeIndex,NodeIndex),f64>, sub_graph: &Graph::<usize,usize>, edge_list: &HashMap<(usize, usize), (usize,usize)>) {
+    fn calc_bwd_node_tpr(par_node: &NodeIndex, node: &NodeIndex, edge_fpr: &HashMap::<(usize,usize),f64>, hmap_node_tpr: &mut HashMap<(NodeIndex,NodeIndex),f64>, sub_graph: &Graph::<usize,usize>, edge_list: &HashMap<(usize, usize), (usize,usize)>) {
         let (par_node_wt, node_wt) = (sub_graph.node_weight(*par_node).unwrap(), sub_graph.node_weight(*node).unwrap());
         let num_child = sub_graph.neighbors(*node)
             .filter(|nbr| {
@@ -486,8 +428,8 @@ pub mod fuzzy_traceback {
             .count();
         let num_bro = sub_graph.neighbors(*par_node).count();
         let gpar_wt = edge_list.get(&(*par_node_wt,*node_wt)).unwrap().1;
+
         let edge_fpr = edge_fpr.get(&(*par_node_wt, gpar_wt)).expect(&(par_node_wt.to_string() + "_" + &gpar_wt.to_string()));
-// println!("Curr-Par-Next: {}-{}-{}; Edge fpr {}, child {}", node_wt, par_node_wt, gpar_wt, edge_fpr, num_child);
         let node_tpr = match num_child {
             0 => (1.0 - *edge_fpr) / (num_bro as f64),
             _ => {
@@ -508,7 +450,7 @@ pub mod fuzzy_traceback {
         hmap_node_tpr.insert((*node, *par_node), node_tpr);
     }
 
-    fn calc_fwd_node_tpr_with_src(par_node: &NodeIndex, node: &NodeIndex, fpr: &f64, edge_fpr: &HashMap::<(usize,usize),f64>, hmap_node_tpr: &mut HashMap<(NodeIndex, NodeIndex),f64>, sub_graph: &Graph::<usize,usize>, full_graph: &UnGraph::<usize,()>, edge_list: &HashMap<(usize, usize), (usize,usize)>) {
+    fn calc_fwd_node_tpr(par_node: &NodeIndex, node: &NodeIndex, fpr: &f64, edge_fpr: &HashMap::<(usize,usize),f64>, hmap_node_tpr: &mut HashMap<(NodeIndex, NodeIndex),f64>, sub_graph: &Graph::<usize,usize>, full_graph: &UnGraph::<usize,()>, edge_list: &HashMap<(usize, usize), (usize,usize)>) {
         // A) in = 0
         // case 1. curr node is a source
         if sub_graph.neighbors_directed(*node, Incoming).count() == 0 {
@@ -626,69 +568,6 @@ pub mod fuzzy_traceback {
             (!node_tpr.is_nan()).then(|| hmap_node_tpr.insert((node, NodeIndex::from(usize::MAX as u32)), node_tpr));
         });
     }
-
-    // fn calc_bwd_node_tpr(par_node: &NodeIndex, node: &NodeIndex, weight: &usize, hmap_edge_fpr: &HashMap::<NodeIndex,f64>, hmap_node_tpr: &mut HashMap<NodeIndex,Vec<f64>>, sub_graph: &Graph::<usize,usize>) {
-    //     let num_child = weighted_child_num(sub_graph, node, weight);
-    //     let num_bro = sub_graph.neighbors(*par_node).count();
-    //     let edge_fpr = hmap_edge_fpr.get(par_node).unwrap();
-    //     let node_tpr = match num_child {
-    //         0 => (1.0 - *edge_fpr) / (num_bro as f64),
-    //         _ => {
-    //             let mut max_child_fpr: f64 = 0.0;
-    //             for child in sub_graph.neighbors(*node) {
-    //                 let conn_edge = sub_graph.find_edge(*node, child).unwrap();
-    //                 if *sub_graph.edge_weight(conn_edge).unwrap() == (weight + 1) {
-    //                     (!hmap_node_tpr.contains_key(&child)).then(||panic!("Curr {:?}, Child {:?}", sub_graph.node_weight(*node), sub_graph.node_weight(child)));
-    //                     let child_fpr = hmap_node_tpr.get(&child).unwrap().last().unwrap();
-    //                     (*child_fpr > max_child_fpr).then(|| max_child_fpr = *child_fpr);
-    //                 }
-    //             }
-    //             1.0 - *edge_fpr * (1.0 - max_child_fpr)
-    //         }
-    //     };
-    //     hmap_safe_insert(hmap_node_tpr, node, node_tpr);
-    // }
-
-    // fn calc_fwd_node_tpr(par_node: &NodeIndex, node: &NodeIndex, weight: &usize, hmap_edge_fpr: &HashMap::<NodeIndex,f64>, hmap_node_tpr: &mut HashMap<NodeIndex,Vec<f64>>, sub_graph: &Graph::<usize,usize>) {
-    //     let num_child = weighted_child_num(sub_graph, node, weight);
-    //     let edge_fpr = hmap_edge_fpr.get(par_node).unwrap();
-    //     // 1) in(v) \neq 0, out(v) = 0; 2) in(v) \neq 0, out(v) > 0;
-    //     let node_tpr = match num_child {
-    //         0 => 1.0 - *edge_fpr,
-    //         _ => {
-    //             let mut mlp_child_fpr: f64 = 1.0;
-    //             for child in sub_graph.neighbors(*node) {
-    //                 let conn_edge = sub_graph.find_edge(*node, child).unwrap();
-    //                 if *sub_graph.edge_weight(conn_edge).unwrap() == (weight + 1) {
-    //                     (!hmap_node_tpr.contains_key(&child)).then(||panic!("Curr {:?}, Child {:?}", sub_graph.node_weight(*node), sub_graph.node_weight(child)));
-    //                     mlp_child_fpr *= 1.0 - hmap_node_tpr.get(&child).unwrap().last().unwrap();
-    //                 }
-    //             }
-    //             1.0 - (*edge_fpr) * mlp_child_fpr
-    //         }
-    //     };
-    //     hmap_safe_insert(hmap_node_tpr, node, node_tpr);
-    // }
-
-    // fn weighted_child_num(sub_graph: &Graph<usize, usize>, node: &NodeIndex, weight: &usize) -> usize {
-    //     let mut num_child: usize = 0;
-    //     for nbr in sub_graph.edges(*node){
-    //         (*nbr.weight() == (weight + 1)).then(|| num_child += 1);
-    //     }
-    //     num_child
-    // }
-
-    // fn calc_fwd_src_node_tpr(node: &NodeIndex, hmap_node_tpr: &mut HashMap<NodeIndex,Vec<f64>>, sub_graph: &Graph::<usize,usize>) {
-    //     let num_parent = sub_graph.neighbors_directed(*node, Incoming).count();
-    //     if num_parent == 0 {
-    //         let mut mul_child_fpr: f64 = 1.0;
-    //         sub_graph.neighbors(*node).into_iter().for_each(|child|
-    //             mul_child_fpr *= 1.0 - hmap_node_tpr.get(&child).unwrap().last().unwrap()
-    //         );
-    //         let node_tpr = 1.0 - mul_child_fpr;
-    //         hmap_safe_insert(hmap_node_tpr, node, node_tpr);
-    //     }
-    // }
 
     fn fpr_from_binom(out_degree: &usize, nbh: &usize, fpr: &f64) -> f64 {
         if *out_degree > 0 {
