@@ -2,9 +2,9 @@ pub mod utils {
     extern crate petgraph;
     
     use petgraph::{graph::{NodeIndex, Graph}, visit::IntoNodeReferences};
-    use petgraph::dot::{Dot, Config};
+    use petgraph::dot::Dot;
     use petgraph::prelude::UnGraph;
-    use std::{io::{prelude::*, BufReader}, collections::HashMap, fs::File, hash::Hash};
+    use std::{io::{prelude::*, BufReader}, collections::HashMap, fs::File};
     use std::fs;
 
     pub fn rand_state (prob: &f32) -> bool {
@@ -91,21 +91,23 @@ pub mod utils {
         (fwd_graph, node_index)
     }
 
-    pub fn fuzzy_value_to_graph (origin_graph: &Graph<usize, usize>, node_values: &HashMap<usize,f64>, edge_values: &HashMap<NodeIndex,f64>) -> Graph::<f64,f64> {
+    pub fn fuz_val_to_graph (graph: &Graph<usize, usize>, node_tpr: &HashMap<usize,f64>, edge_fpr: &HashMap<(usize,usize),f64>) -> Graph::<f64,f64> {
         let mut fuzzy_graph = Graph::<f64,f64>::new();
         let mut hmap_old_new = HashMap::<NodeIndex,NodeIndex>::new();
-        for (old_n, k) in origin_graph.node_references() {
-            let new_weight = (*k as f64) + (node_values.get(k).unwrap() / 100.0);
+        for (old_n, k) in graph.node_references() {
+            // let new_weight = (*k as f64) + (node_tpr.get(k).unwrap() / 100.0);
+            let new_weight = *node_tpr.get(k).unwrap();
             let new_n = fuzzy_graph.add_node(new_weight);
             hmap_old_new.insert(old_n, new_n);
         }
-        for e in origin_graph.edge_indices() {
-            let (st, end) = origin_graph.edge_endpoints(e).unwrap();
-            let edge_weight = match edge_values.contains_key(&st) {
-                true => *edge_values.get(&st).unwrap(),
+        for e in graph.edge_indices() {
+            let edge_end = graph.edge_endpoints(e).unwrap();
+            let (st, end) = (graph.node_weight(edge_end.0).unwrap(), graph.node_weight(edge_end.1).unwrap());
+            let edge_weight = match edge_fpr.contains_key(&(*st,*end)) {
+                true => *edge_fpr.get(&(*st,*end)).unwrap(),
                 false =>  -1.0,
             };
-            fuzzy_graph.add_edge(*hmap_old_new.get(&st).unwrap(), *hmap_old_new.get(&end).unwrap(), f64::trunc(edge_weight  * 100.0) / 100.0);
+            fuzzy_graph.add_edge(*hmap_old_new.get(&edge_end.0).unwrap(), *hmap_old_new.get(&edge_end.1).unwrap(), f64::trunc(edge_weight  * 100.0) / 100.0);
         }
         fuzzy_graph
     }
@@ -120,6 +122,18 @@ pub mod utils {
         let mut f = File::create(dir).unwrap();
         for (k,v) in node_value {
             let output = format!("{},{:?}\n", k, v);
+            let _ = f.write_all(&output.as_bytes());
+        }
+    }
+
+    pub fn gen_raw_data_file (node_tpr: &HashMap<usize,f64>, real_id_map: &HashMap<usize, NodeIndex>, dir: String) {
+        let mut f = File::create(dir).unwrap();
+        for (node_id,fuzz_val) in node_tpr {
+            let is_true_positive: usize = match real_id_map.contains_key(node_id) {
+                true => 1,
+                false => 0,
+            };
+            let output = format!("{},{},{}\n", node_id, is_true_positive, fuzz_val);
             let _ = f.write_all(&output.as_bytes());
         }
     }
@@ -311,10 +325,11 @@ pub mod fuzzy_traceback {
         curr_tmd.append(&mut next_tmd);
     }
 
-    pub fn calc_fuz_val (fpr: &f64, max_depth: &usize, trace_start_node: &NodeIndex, bwd_edge_list: &HashMap<(usize,usize),(usize,usize)>, fwd_edge_list: &mut HashMap<(usize,usize),(usize,usize)>, full_graph: &UnGraph::<usize,()>) -> (HashMap::<usize, f64>, HashMap::<(usize, usize), f64>) {
+    pub fn calc_fuz_val (fpr: &f64, max_depth: &usize, st_node: &usize, bwd_edge_list: &HashMap<(usize,usize),(usize,usize)>, fwd_edge_list: &mut HashMap<(usize,usize),(usize,usize)>, full_graph: &UnGraph::<usize,()>) -> (HashMap::<usize, f64>, HashMap::<(usize, usize), f64>) {
         let mut nodes_fuzzy_value = HashMap::<usize, f64>::new();
 
-        let (bwd_graph, _) = hmap_to_graph(bwd_edge_list);
+        let (bwd_graph, bwd_id_map) = hmap_to_graph(bwd_edge_list);
+        let trace_start_node = bwd_id_map.get(st_node).unwrap();
         // remove backward graph from forward graph
         for kv in bwd_edge_list {
             fwd_edge_list.contains_key(&(kv.0.1, kv.0.0)).then(|| fwd_edge_list.remove(&(kv.0.1, kv.0.0)));
@@ -323,7 +338,7 @@ pub mod fuzzy_traceback {
 
         // 1. Compute FPR of all edges in bwd_graph and fwd_graph, repectively.
         let bwd_edge_fpr = calc_edge_fpr_with_src(&bwd_edge_list, &bwd_graph, full_graph, fpr);
-        let fwd_edge_fpr = calc_edge_fpr_with_src(&fwd_edge_list, &fwd_graph, full_graph, fpr);
+        let mut fwd_edge_fpr = calc_edge_fpr_with_src(&fwd_edge_list, &fwd_graph, full_graph, fpr);
 
         // 2. Compute FPR of nodes in backward & forward graph
         let mut bwd_node_tpr = calc_node_tpr_with_src(&true, max_depth, fpr, &bwd_graph, &full_graph, &bwd_edge_fpr, &fwd_edge_list, &bwd_edge_list);
@@ -332,40 +347,39 @@ pub mod fuzzy_traceback {
         let mut fwd_node_tpr = calc_node_tpr_with_src(&false, max_depth, fpr, &fwd_graph, &full_graph, &fwd_edge_fpr, &fwd_edge_list, &bwd_edge_list);
         calc_fwd_src_node_tpr(&fwd_edge_list, &mut fwd_node_tpr, &fwd_graph);
 
-        // // 3. Integrate FPRs of nodes in loop or fwd/bwd graph
-        let mut node_tpr = HashMap::<usize, Vec<f64>>::new();
+        // 3. Integrate FPRs of nodes in loop or fwd/bwd graph
+        let mut full_node_tpr = HashMap::<usize, Vec<f64>>::new();
 
-        fwd_node_tpr.into_iter()
-            .for_each(|((node,_), tpr)| {
-                let node_id = *fwd_graph.node_weight(node).unwrap();
-                match node_tpr.contains_key(&node_id) {
-                    true => node_tpr.get_mut(&node_id).unwrap().push(tpr),
-                    false => {
-                        node_tpr.insert(node_id, vec![tpr]);
-                    },
-                };
-            });
+        intg_nodes_tpr(fwd_node_tpr, fwd_graph, &mut full_node_tpr);
+        intg_nodes_tpr(bwd_node_tpr, bwd_graph, &mut full_node_tpr);
 
-        bwd_node_tpr.into_iter()
-            .for_each(|((node,_), tpr)| {
-                let node_id = *bwd_graph.node_weight(node).unwrap();
-                match node_tpr.contains_key(&node_id) {
-                    true => node_tpr.get_mut(&node_id).unwrap().push(tpr),
-                    false => {
-                        node_tpr.insert(node_id, vec![tpr]);
-                    },
-                };
-            });
-
-        node_tpr.into_iter().for_each(|(node, tpr_vec)| {
+        full_node_tpr.into_iter().for_each(|(node, tpr_vec)| {
             let mut fpr: f64 = 1.0;
             tpr_vec.iter().for_each(|tpr| {
                 fpr *= 1.0 - tpr;
             });
-            nodes_fuzzy_value.insert(node, f64::trunc((1.0 - fpr)  * 10000.0) / 100.0);
+            nodes_fuzzy_value.insert(node, f64::trunc((1.0 - fpr)  * 1000000.0) / 10000.0);
+        });
+
+        // combine bwd_edge_fpr and fwd_edge_fpr
+        bwd_edge_fpr.into_iter().for_each(|(k,v)| {
+            (!fwd_edge_fpr.contains_key(&(k.1, k.0))).then(|| fwd_edge_fpr.insert((k.1, k.0), v));
         });
 
         (nodes_fuzzy_value, fwd_edge_fpr)
+    }
+
+    fn intg_nodes_tpr(sub_node_tpr: HashMap<(NodeIndex, NodeIndex), f64>, sub_graph: Graph<usize, usize>, full_node_tpr: &mut HashMap<usize, Vec<f64>>) {
+        sub_node_tpr.into_iter()
+            .for_each(|((node,_), tpr)| {
+                let node_id = *sub_graph.node_weight(node).unwrap();
+                match full_node_tpr.contains_key(&node_id) {
+                    true => full_node_tpr.get_mut(&node_id).unwrap().push(tpr),
+                    false => {
+                        full_node_tpr.insert(node_id, vec![tpr]);
+                    },
+                };
+            });
     }
 
     fn calc_edge_fpr_with_src(edge_list: &HashMap<(usize,usize),(usize,usize)>, sub_graph: &Graph<usize, usize>, full_graph: &UnGraph<usize, ()>, fpr: &f64) -> HashMap<(usize,usize), f64> {
@@ -385,13 +399,12 @@ pub mod fuzzy_traceback {
                     sub_graph.neighbors_directed(node, Outgoing).count()
                 }
                 else {
-                    sub_graph.neighbors(node).into_iter().map(|child| {
-                        let child_wt = *sub_graph.node_weight(child).unwrap();
-                        match edge_list.get(&(*node_wt, child_wt)).unwrap().1 == par_node_wt {
-                            true => 1,
-                            false => 0,
-                        }
-                    }).sum()
+                    sub_graph.neighbors(node).into_iter()
+                        .filter(|child| {
+                            let child_wt = *sub_graph.node_weight(*child).unwrap();
+                            edge_list.get(&(*node_wt, child_wt)).unwrap().1 == par_node_wt
+                        })
+                        .count()
                 };
 
                 let src_fpr = fpr_from_binom(&src_edge_count, &conn, fpr);
@@ -472,7 +485,7 @@ pub mod fuzzy_traceback {
             .count() == 0 {
                 true => {
                     let child_num = edge_list.into_iter()
-                        .filter(|((snd,rcv),_)| snd == par_node_wt)
+                        .filter(|((snd,_),_)| snd == par_node_wt)
                         .filter(|(_,(_,src))| *src == gpar_wt)
                         .count();
                     let conn = full_graph.neighbors(NodeIndex::from(*par_node_wt as u32)).count();
@@ -646,10 +659,9 @@ pub mod fuzzy_traceback {
 #[cfg(test)]
 mod tests {
     extern crate test;
-    use std::{fs::File, io::Write, collections::HashMap};
+    use std::collections::HashMap;
 
-    use petgraph::{Graph, Undirected, dot::{Dot, Config}, adj::NodeIndex, visit::IntoNodeReferences};
-    use crate::simulation::{sir::{self}, fuzzy_traceback::{fuzz_bfs, self, degree_analysis, fuzzy_trace_ours, calc_fuz_val, fuz_val_analysis}, utils::{import_graph, graph_to_dot, fuzzy_value_to_graph, write_val_to_file, hmap_to_graph, vec_to_graph}};
+    use crate::simulation::{sir, fuzzy_traceback::{fuzz_bfs, self, degree_analysis, fuzzy_trace_ours, calc_fuz_val}, utils::{import_graph, graph_to_dot, fuz_val_to_graph, write_val_to_file, hmap_to_graph, vec_to_graph, gen_raw_data_file}};
 
     use super::utils::dedup_in_db_file;
   
@@ -700,32 +712,22 @@ graph_to_dot(&fuzz_graph, "./output/fuzz_graph.dot".to_string());
 
         loop {
             // 1.Generate a forward graph that start in node 719 by SIR algorithm
-            let (infected_edges, node_src) = sir::sir_spread(&20, &0.05, &0.7, &sys_graph.clone());
+            let (infected_edges, node_src) = sir::sir_spread(&20, &0.05, &0.6, &sys_graph.clone());
             if infected_edges.len() == 0 {
                 continue;
             }
-            let (fwd_graph, sys_fwd_map) = vec_to_graph(&infected_edges);
+            let (fwd_graph, fwd_to_sys_id_map) = vec_to_graph(&infected_edges);
 
             println!("Forward Graph: node {:?}, edge {:?}, mean degree: {:?}", fwd_graph.node_count(), fwd_graph.edge_count(), degree_analysis(&fwd_graph, &sys_graph));
-            graph_to_dot(&fwd_graph, "./output/fwd_graph.dot".to_string());
-            graph_to_dot(&fwd_graph, "../Traceability-Evaluation/graphs/fwd_graph.dot".to_string());
+            // graph_to_dot(&fwd_graph, "./output/fwd_graph.dot".to_string());
+            graph_to_dot(&fwd_graph, "../Traceability-Evaluation/graphs/graph_real.dot".to_string());
 
             // 2. Run fuzzy traceback to generate the fuzzy forward graph
             let start_node = fuzzy_traceback::any_leaf(&fwd_graph);
-            let (mut bwd_traced_edges, mut fwd_traced_edges, max_depth) = fuzzy_trace_ours(&sys_graph, &fwd_graph, &sys_fwd_map, &node_src, &start_node, &trace_fpr);
-
-            let (fuz_bwd_graph, fuz_bwd_id_map) = hmap_to_graph(&bwd_traced_edges);
-            let (fuz_fwd_graph, _) = hmap_to_graph(&fwd_traced_edges);
-
-            println!("Fuzzy bwd Graph: node {:?}, edge {:?}", fuz_bwd_graph.node_count(), fuz_bwd_graph.edge_count());
-            graph_to_dot(&fuz_bwd_graph, "./output/fuzz_bwd_graph.dot".to_string());
-            println!("Fuzzy fwd Graph: node {:?}, edge {:?}", fuz_fwd_graph.node_count(), fuz_fwd_graph.edge_count());
-            graph_to_dot(&fuz_fwd_graph, "./output/fuzz_fwd_graph.dot".to_string());
+            let (mut bwd_traced_edges, mut fwd_traced_edges, max_depth) = fuzzy_trace_ours(&sys_graph, &fwd_graph, &fwd_to_sys_id_map, &node_src, &start_node, &trace_fpr);
 
             // 3. Compute fuzzy values of nodes in fuzzy graph by the membership function
-            let start_in_bwd_graph = fuz_bwd_id_map.get(&start_node).unwrap();
-            let (node_tpr, edge_fpr) = calc_fuz_val(&(trace_fpr as f64), &max_depth, start_in_bwd_graph, &mut bwd_traced_edges, &mut fwd_traced_edges, &sys_graph);
-            println!("Fuzzy value node count: {}", node_tpr.len());
+            let (node_tpr, edge_fpr) = calc_fuz_val(&(trace_fpr as f64), &max_depth, &start_node, &mut bwd_traced_edges, &mut fwd_traced_edges, &sys_graph);
 
             // 3-1. insert deleted edges from bwd_edges to fwd_edges
             bwd_traced_edges.into_iter().filter(|((snd, rcv), _)| {
@@ -738,15 +740,22 @@ graph_to_dot(&fuzz_graph, "./output/fuzz_graph.dot".to_string());
             let (full_fuz_graph, _) = hmap_to_graph(&fwd_traced_edges);
             println!("Full fuzzy Graph: node {:?}, edge {:?}", full_fuz_graph.node_count(), full_fuz_graph.edge_count());
 
-            // let fuzzy_graph = fuzzy_value_to_graph(&fuz_fwd_graph, &node_tpr, &edge_fpr);
-            // graph_to_dot(&fuzzy_graph, "./output/fuzz_graph.dot".to_string());
+            let fuzzy_graph = fuz_val_to_graph(&full_fuz_graph, &node_tpr, &edge_fpr);
+            graph_to_dot(&fuzzy_graph, "./output/graph_fuzzy.dot".to_string());
 
-            // 4. Output the max fuzzy value node to a file for analysis
-            let max_tpr_nodes = fuz_val_analysis(&node_tpr, &sys_fwd_map);
-            write_val_to_file(&max_tpr_nodes, "../Traceability-Evaluation/graphs/values.txt".to_string());
-            let sys_fwd_map_usize: HashMap<usize,usize> = sys_fwd_map.iter().map(|(k,v)|
+            // 3-2. generate raw data file, where one line a tuple (node_id, is_true_positive, fuzzy_val)
+            gen_raw_data_file(&node_tpr, &fwd_to_sys_id_map, "../Traceability-Evaluation/inputs/data_fuzzy_value.txt".to_string());
+
+            let sys_to_fwd_id_map: HashMap<usize,usize> = fwd_to_sys_id_map.iter().map(|(k,v)|
                 (v.index(), *k)).collect();
-            write_val_to_file(&sys_fwd_map_usize, "../Traceability-Evaluation/graphs/index.txt".to_string());
+            write_val_to_file(&sys_to_fwd_id_map, "../Traceability-Evaluation/inputs/id_map_fwd.txt".to_string());
+
+            // // 4. Output the max fuzzy value node to a file for analysis
+            // write_val_to_file(&node_tpr, "../Traceability-Evaluation/inputs/raw_fuz_val.txt".to_string());
+
+            // let leveled_node_tpr = fuz_val_analysis(&node_tpr, &fwd_to_sys_id_map);
+            // write_val_to_file(&leveled_node_tpr, "../Traceability-Evaluation/inputs/leveled_fuz_val.txt".to_string());
+            
             break;
         }
     }
