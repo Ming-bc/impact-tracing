@@ -360,7 +360,7 @@ pub mod fuzzy_traceback {
             tpr_vec.iter().for_each(|tpr| {
                 fpr *= 1.0 - tpr;
             });
-            nodes_fuzzy_value.insert(node, f64::trunc((1.0 - fpr)  * 1000000.0) / 10000.0);
+            nodes_fuzzy_value.insert(node, (1.0 - fpr) * 100.0);
         });
 
         // combine bwd_edge_fpr and fwd_edge_fpr
@@ -696,7 +696,7 @@ mod tests {
     #[test]
     fn test_fuzz_bfs() {
         let sys_graph = import_graph("./graphs/message.txt".to_string());
-        let (infected_edges, msg_source) = sir::sir_spread(&10, &0.05, &0.6, &sys_graph.clone());
+        let (infected_edges, _) = sir::sir_spread(&10, &0.05, &0.6, &sys_graph.clone());
         let (fwd_graph, sys_fwd_map) = vec_to_graph(&infected_edges);
 println!("Forward Graph: node {:?}, edge {:?}, mean degree: {:?}", fwd_graph.node_count(), fwd_graph.edge_count(), degree_analysis(&fwd_graph, &sys_graph));
 graph_to_dot(&fwd_graph, "./output/fwd_graph.dot".to_string());
