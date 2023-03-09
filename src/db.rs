@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 pub mod bloom_filter {
     extern crate redis;
     extern crate base64;

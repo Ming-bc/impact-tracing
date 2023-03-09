@@ -1,12 +1,12 @@
-
+#![allow(dead_code)]
 
 pub mod traceback {
     extern crate base64;
 
     use std::collections::{HashSet, HashMap};
     use std::sync::{Arc, Mutex};
-    use std::{thread, time};
-    use crate::message::messaging::{MsgReport, FwdType, Edge, MsgPacket, Session};
+    use std::{thread};
+    use crate::message::messaging::{MsgReport, Edge, Session};
     use crate::tool::algos::{self, store_tag_gen};
     use crate::db::{redis_pack, bloom_filter};
     use base64::{decode, encode};
@@ -73,9 +73,7 @@ pub mod traceback {
     }
 
     pub fn par_backward_search(msg: &str, md: TraceData) -> (TraceData, Vec<TraceData>) {
-let part_1 = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
         let sessions = redis_pack::query_users_receive(&md.uid);
-let part_2 = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
         let uid = Arc::new(md.uid);
         let key = Arc::new(md.key);
         let message = Arc::new(msg.to_string());
@@ -106,14 +104,12 @@ let part_2 = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
         for handle in thread_list {
             handle.join().unwrap();
         }
-        let mut tags_hmap = Arc::try_unwrap(par_tags).unwrap().into_inner().unwrap();
+        let tags_hmap = Arc::try_unwrap(par_tags).unwrap().into_inner().unwrap();
         let next_key_hmap = Arc::try_unwrap(par_next_keys).unwrap().into_inner().unwrap();
 
         let mut bf_tags_vec: Vec<String> = tag_hmap_to_vec_in_squence(&tags_hmap);
-        let mut bf_next_key_vec: Vec<[u8; 16]> = hmap_to_vec_in_squence(&next_key_hmap);
-let part_3 = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+        let bf_next_key_vec: Vec<[u8; 16]> = hmap_to_vec_in_squence(&next_key_hmap);
         let bf_result = bloom_filter::mexists(&mut bf_tags_vec);
-let part_4 = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
         let mut source: TraceData = TraceData::new(0, md.key);
         let mut receivers: Vec<TraceData> = Vec::new();
 
@@ -135,11 +131,6 @@ let part_4 = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
                 receivers.push(TraceData {uid: sess.sender, key: *next_key})
             }
         }
-let part_5 = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
-// print!("Part 1: {:?}, ", part_2 - part_1);
-// print!("Part 2: {:?}, ", part_3 - part_2);
-// print!("Part 3: {:?}, ", part_4 - part_3);
-// print!("Part 4: {:?}.\n", part_5 - part_4);
         (source, receivers)
     }
 
@@ -189,8 +180,6 @@ let part_5 = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
     }
 
     pub fn par_forward_search(msg: &str, md: &Vec<TraceData>) -> Vec<Vec<TraceData>> {
-        let binding = decode(msg).unwrap();
-        let msg_bytes = <&[u8]>::try_from(&binding[..]).unwrap();
         let mut result: Vec<Vec<TraceData>> = Vec::new();
         let mut users: Vec<u32> = Vec::new();
         for data in md {
@@ -415,8 +404,6 @@ mod tests {
     use crate::tool::algos;
     use crate::db::redis_pack::{self, empty};
     use crate::trace::traceback;
-    use crate::visualize::display;
-
     use crate::message::messaging::{FwdType, MsgPacket, Session, MsgReport, Edge};
     use super::traceback::{TraceData};
     use std::time::{SystemTime, Duration, UNIX_EPOCH};

@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 pub mod eval {
     extern crate base64;
     extern crate test;

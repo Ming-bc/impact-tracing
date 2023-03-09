@@ -1,4 +1,4 @@
-
+#![allow(dead_code)]
 pub mod utils{
     use aes::Aes128;
     use aes::cipher::{

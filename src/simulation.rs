@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 pub mod utils {
     extern crate petgraph;
     

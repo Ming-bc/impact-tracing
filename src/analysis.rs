@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 mod utils {
     use std::{io::Write, fs::File};
 
