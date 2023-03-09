@@ -684,8 +684,8 @@ mod tests {
         let dir = "./graphs/message.txt";
         let sys_graph = import_graph(dir.to_string());
         println!("{:?}, {:?}", sys_graph.node_count(), sys_graph.edge_count());
-        let (infected_edges, msg_source) = sir::sir_spread(&10, &0.05, &0.6, &sys_graph.clone());
-        let (fwd_graph, sys_fwd_map) = vec_to_graph(&infected_edges);
+        let (infected_edges, _) = sir::sir_spread(&10, &0.05, &0.6, &sys_graph.clone());
+        let (fwd_graph, _) = vec_to_graph(&infected_edges);
         println!("{:?}, {:?}", fwd_graph.node_count(), fwd_graph.edge_count());
 
         graph_to_dot(&fwd_graph, "output/fwd_graph.dot".to_string());
@@ -713,7 +713,7 @@ graph_to_dot(&fuzz_graph, "./output/fuzz_graph.dot".to_string());
         loop {
             // 1.Generate a forward graph that start in node 719 by SIR algorithm
             let (infected_edges, node_src) = sir::sir_spread(&20, &0.05, &0.6, &sys_graph.clone());
-            if infected_edges.len() == 0 {
+            if infected_edges.len() < 200 {
                 continue;
             }
             let (fwd_graph, fwd_to_sys_id_map) = vec_to_graph(&infected_edges);
