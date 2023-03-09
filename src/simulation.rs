@@ -627,35 +627,6 @@ pub mod fuzzy_traceback {
         f64::trunc(mean)
     }
 
-    pub fn fuz_val_analysis(node_fuzzy_value: &HashMap<usize,f64>, real_nodes: &HashMap<usize,NodeIndex>) -> HashMap::<usize,usize> {
-        let group:usize = 5;
-        let mut node_vec_id = HashMap::<usize,usize>::new();
-        let mut all: Vec<usize> = vec![0,0,0,0,0];
-        let mut real: Vec<usize> = vec![0,0,0,0,0];
-        for (n,v) in node_fuzzy_value {
-            let mut vec_id: usize = 0;
-            match *v {
-                0.0..=95.0 => vec_id = 5,
-                95.0..=99.0 => vec_id = 4,
-                99.0..=99.95 => vec_id = 3,
-                99.95..=99.99 => vec_id = 2,
-                99.99..=100.0 => vec_id = 1,
-                _ => (),
-            }
-            real_all_count(&(group - vec_id), &n, &mut real, &mut all, &real_nodes, &mut node_vec_id);
-        }
-        println!("{:?} {:?}", real, all);
-        node_vec_id
-    }
-
-    fn real_all_count(vec_id: &usize, node_id: &usize, real_count: &mut Vec<usize>, all: &mut Vec<usize>, real_nodes: &HashMap<usize, NodeIndex>, node_vec_id: &mut HashMap::<usize,usize>) {
-        *all.get_mut(*vec_id).unwrap() += 1;
-        real_nodes.contains_key(node_id).then(|| {
-            *real_count.get_mut(*vec_id).unwrap() += 1;
-            node_vec_id.insert(*node_id, *vec_id);
-        });
-    }
-
 }
 
 #[cfg(test)]
@@ -751,12 +722,6 @@ graph_to_dot(&fuzz_graph, "./output/fuzz_graph.dot".to_string());
             let sys_to_fwd_id_map: HashMap<usize,usize> = fwd_to_sys_id_map.iter().map(|(k,v)|
                 (v.index(), *k)).collect();
             write_val_to_file(&sys_to_fwd_id_map, "../Traceability-Evaluation/inputs/id_map_fwd.txt".to_string());
-
-            // // 4. Output the max fuzzy value node to a file for analysis
-            // write_val_to_file(&node_tpr, "../Traceability-Evaluation/inputs/raw_fuz_val.txt".to_string());
-
-            // let leveled_node_tpr = fuz_val_analysis(&node_tpr, &fwd_to_sys_id_map);
-            // write_val_to_file(&leveled_node_tpr, "../Traceability-Evaluation/inputs/leveled_fuz_val.txt".to_string());
             
             break;
         }
