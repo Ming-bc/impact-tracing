@@ -135,8 +135,8 @@ mod traceability {
 
         for i in 0..(thd_list.len()-1) {
             let inf_list: Vec<usize> = hmap.iter()
-                .filter(|(_,(_,fuz))| *fuz >= *thd_list.get(i).unwrap())
-                .filter(|(_,(_,fuz))| *fuz < *thd_list.get(i+1).unwrap())
+                .filter(|(_,(_,fuz))| *fuz > *thd_list.get(i).unwrap())
+                .filter(|(_,(_,fuz))| *fuz <= *thd_list.get(i+1).unwrap())
                 .map(|(_,(inf,_))| *inf)
                 .collect();
             let all_count = inf_list.len();
@@ -149,17 +149,19 @@ mod traceability {
     }
 
     pub fn gen_thd_list() -> Vec::<f64>{
-        let mut thd_list = Vec::<f64>::new();
-        let (mut lower_bound, upper_bound, step) = (99.99, 100.0, 0.003);
+        // let mut thd_list = Vec::<f64>::new();
+        // let (mut lower_bound, upper_bound, step) = (99.99, 100.0, 0.003);
 
-        while lower_bound < upper_bound {
-            let input = f64::trunc(lower_bound * 1000.0) / 1000.0;
-            thd_list.push(input);
-            lower_bound += step;
-        }
-        thd_list.extend(vec![99.9995, 99.99995, 99.999995, 99.9999995, 99.99999995, 99.999999995]);
-        thd_list.push(upper_bound);
-        thd_list
+        // while lower_bound < upper_bound {
+        //     let input = f64::trunc(lower_bound * 1000.0) / 1000.0;
+        //     thd_list.push(input);
+        //     lower_bound += step;
+        // }
+        // thd_list.extend(vec![99.9995, 99.99995, 99.999995, 99.9999995, 99.99999995, 99.999999995]);
+        // thd_list.push(upper_bound);
+        // thd_list
+
+        vec![99.99, 99.995, 99.9995, 99.99995, 99.999995, 99.9999995, 99.99999995, 99.999999995, 100.0]
     }
 
     fn find_max_inf_level(hmap: &HashMap<usize,(usize,f64)>) -> usize {
@@ -192,16 +194,27 @@ mod tests {
     }
 
     #[test]
-    fn test_inf_fpr() {
+    fn test_inf_fpr(){
         let thd_list = gen_thd_list();
         let val_list = import_csv(&"../Traceability-Evaluation/inputs/fuz_val_and_inf.csv".to_string());
         write_val_vec_to_file(&calc_inf_fpr(&val_list, &thd_list), &"./output/inf_fpr_dist/inf_fpr.txt".to_string());
     }
 
     #[test]
-    fn test_fuz_fpr() {
-        let thd_list = vec![0.0, 80.0, 90.0, 95.0, 99.0, 99.5, 99.9, 99.99];
+    fn test_fuz_fpr(){
+        let range_list = vec![0.0, 80.0, 90.0, 95.0, 99.0, 99.5, 99.9, 99.99, 100.0];
         let val_list = import_csv(&"../Traceability-Evaluation/inputs/fuz_val_and_inf.csv".to_string());
-        write_val_vec_to_file(&calc_fuz_fpr(&val_list, &thd_list), &"./output/fuz_fpr/fuz_fpr.txt".to_string());
+        write_val_vec_to_file(&calc_fuz_fpr(&val_list, &range_list), &"./output/fuz_fpr/fuz_fpr.txt".to_string());
+    }
+
+    #[test]
+    fn gen_graph_csv() {
+        let thd_list = gen_thd_list();
+        let range_list = vec![0.0, 80.0, 90.0, 95.0, 99.0, 99.5, 99.9, 99.99, 100.0];
+        let val_list = import_csv(&"../Traceability-Evaluation/inputs/fuz_val_and_inf.csv".to_string());
+        write_val_vec_to_file(&calc_inf_dist(&val_list), &"./output/inf_dist/k_shell.txt".to_string());
+        write_val_vec_to_file(&calc_thd_fpr(&val_list, &thd_list), &"./output/thd_fpr_fix_step/thd_fpr.txt".to_string());
+        write_val_vec_to_file(&calc_inf_fpr(&val_list, &thd_list), &"./output/inf_fpr_dist/inf_fpr.txt".to_string());
+        write_val_vec_to_file(&calc_fuz_fpr(&val_list, &range_list), &"./output/fuz_fpr/fuz_fpr.txt".to_string());
     }
 }

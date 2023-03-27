@@ -434,7 +434,7 @@ mod tests {
         let users: Vec<u32> = vec![1, 2, 3];
         let fake_receivers: Vec<u32> = vec![1, 5, 6, 7];
         let mut sess = mock_rows_line(&users);
-        let mut sess_star = mock_rows_star(&fake_receivers);
+        let sess_star = mock_rows_star(&fake_receivers);
         sess.extend(sess_star);
         let _ = redis_pack::pipe_add(&mut sess);
 
@@ -445,7 +445,7 @@ mod tests {
         // Bwd Search
         let (result, _) = traceback::backward_search(&message, TraceData::new(*receiver, report_key));
         assert_eq!(result.uid, *sender);
-        let (result, _) = traceback::par_backward_search(&message, TraceData::new(*receiver, report_key));
+        let (_, _) = traceback::par_backward_search(&message, TraceData::new(*receiver, report_key));
 
         redis_pack::empty();
     }
@@ -482,8 +482,8 @@ mod tests {
         let depth: u32 = 3;
         let branch_factor: u32 = 3;
 
-        let (fwd_tree_edges, search_tree_size) = tree_edge_compute(depth, branch_factor);
-        let (sess, key, message, tree_md) = arbitary_tree_gen(depth, branch_factor);
+        let (fwd_tree_edges, _) = tree_edge_compute(depth, branch_factor);
+        let (_, _, message, tree_md) = arbitary_tree_gen(depth, branch_factor);
 println!("Gen finish");
         let mut report_index: usize = 0;
         for i in 0..tree_md.len() {
@@ -504,52 +504,61 @@ println!("Gen finish");
     }
 
     #[test]
-    fn test_tracing_in_path_and_tree () {
+    fn test_tracing_in_path_for_paper() {
         let loop_index: usize = 1;
-        let depth: u32 = 9;
-        let branch_factor: u32 = 3;
+        let path_length: Vec<u32> = vec![50,100,150,200,250,300,1093];
+        let mut count_vec: Vec<f64> = Vec::new();
 
-        let (fwd_tree_edges, search_tree_size) = tree_edge_compute(depth, branch_factor);
-        let path_length: u32 = (search_tree_size / OURS_BRANCH) as u32;
-
-        print!("Tree size: {}; ", fwd_tree_edges - 1);
-        print!("Search size: {}; ", search_tree_size - 1);
-        print!("Path length: {}; \n", path_length);
-
-        test_tracing_in_abitary_path(&path_length, &loop_index);
-        // test_tracing_in_abitary_tree(&depth, &branch_factor, &fwd_tree_edges, &loop_index);
+        path_length.iter().for_each(|length| {
+            count_vec.push(test_tracing_in_abitary_path(&length, &loop_index));
+        });
+        println!("{:?}", count_vec);
     }
 
-    fn test_tracing_in_abitary_path(path_length: &u32, loop_index: &usize) {
-        let (sess, key, message) = arbitary_path_gen(*path_length, OURS_BRANCH);
+    #[test]
+    fn test_tracing_in_tree_for_paper() {
+        let branch_factor: u32 = 3;
+        let depth_list: Vec<u32> = vec![3,4,5];
+        let loop_index: usize = 1;
+        let mut count_vec: Vec<f64> = Vec::new();
+        
 
+        depth_list.iter().for_each(|depth| {
+            let (fwd_tree_edges, _) = tree_edge_compute(*depth, branch_factor);
+            count_vec.push(test_tracing_in_abitary_tree(&depth, &branch_factor, &fwd_tree_edges, &loop_index));
+        });
+        println!("{:?}", count_vec);
+    }
+
+    fn test_tracing_in_abitary_path(path_length: &u32, loop_index: &usize) -> f64 {
+        let mut count_in_ms: f64  = 0.0;
         for _i in 0..*loop_index {
+            let (sess, key, message) = arbitary_path_gen(*path_length, OURS_BRANCH);
             let trace_start = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
             let path = traceback::tracing(MsgReport::new(key, message.clone()), &sess.receiver);
             let trace_end = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
-
-            println!("Path runtime: {:?}", trace_end - trace_start);
             assert_eq!(path.len() as u32, path_length - 1);
-            thread::sleep(time::Duration::from_millis(1000));
+            count_in_ms += ((trace_end.as_millis() - trace_start.as_millis()) as f64) / (*loop_index as f64);
+            // thread::sleep(time::Duration::from_millis(1000));
         }
         redis_pack::empty();
+        f64::trunc(count_in_ms  * 100.0) / 100.0
     }
 
-    fn test_tracing_in_abitary_tree(depth: &u32, branch_factor: &u32, size: &u32, loop_index: &usize) {
-        let gen_start = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
-        let (sess, key, message, trace_md) = arbitary_tree_gen(*depth, *branch_factor);
-        let gen_end = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
-        println!("Tree gentime: {:?}", gen_end - gen_start);
+    fn test_tracing_in_abitary_tree(depth: &u32, branch_factor: &u32, size: &u32, loop_index: &usize) -> f64 {
+        let mut count_in_ms: f64  = 0.0;
         for _i in 0..*loop_index {
+            let (sess, key, message, _) = arbitary_tree_gen(*depth, *branch_factor);
             let trace_start = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
             let path = traceback::tracing(MsgReport::new(key, message.clone()), &sess.receiver);
             let trace_end = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
-            println!("Tree runtime: {:?}", trace_end - trace_start);
+            count_in_ms += ((trace_end.as_millis() - trace_start.as_millis()) as f64) / (*loop_index as f64);
     
             assert_eq!(path.len() as u32, *size);
             thread::sleep(time::Duration::from_millis(1000));
         }
         redis_pack::empty();
+        f64::trunc(count_in_ms  * 100.0) / 100.0
     }
 
     fn arbitary_path_gen (length_of_path: u32, num_of_sess_per_user: u32) -> (Session, [u8; 16], String)  {

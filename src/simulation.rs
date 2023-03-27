@@ -3,8 +3,8 @@
 pub mod utils {
     extern crate petgraph;
     
-    use petgraph::{graph::{NodeIndex, Graph}, visit::IntoNodeReferences};
-    use petgraph::dot::Dot;
+    use petgraph::{graph::{NodeIndex, Graph}, visit::IntoNodeReferences, Undirected};
+    use petgraph::dot::{Dot,Config};
     use petgraph::prelude::UnGraph;
     use std::{io::{prelude::*, BufReader}, collections::HashMap, fs::File};
     use std::fs;
@@ -120,6 +120,34 @@ pub mod utils {
         let _ = f.write_all(&output.as_bytes());
     }
 
+    pub fn graph_to_dot_for_draw(fwd_edge_list: &Vec<(usize,usize)>, fuzz_edge_list: &HashMap<(usize, usize), (usize, usize)>, sys_graph: &UnGraph<usize, ()>, dir: &String) {
+        let mut wt_graph = Graph::<usize, usize>::new();
+        sys_graph.node_indices().for_each(|node| {
+            wt_graph.add_node(node.index());
+        });
+        
+        for e in sys_graph.edge_indices() {
+            let (st_id, end_id) = sys_graph.edge_endpoints(e).unwrap();
+            let (st, end) = (st_id.index(), end_id.index());
+            let edge_wt: usize;
+            if fuzz_edge_list.contains_key(&(st,end)) | fuzz_edge_list.contains_key(&(end,st)) {
+                if fwd_edge_list.contains(&(st,end)) | fwd_edge_list.contains(&(end,st)) {
+                    edge_wt = 2;
+                } else {
+                    edge_wt = 1;
+                }
+            } else {
+                edge_wt = 0;
+            }
+            wt_graph.add_edge(NodeIndex::from(st as u32), NodeIndex::from(end as u32), edge_wt);
+        }
+        let ug: UnGraph<usize,usize> = wt_graph.into_edge_type::<Undirected>();
+
+        let mut f = File::create(dir).unwrap();
+        let output = format!("{:?}", Dot::with_config(&ug, &[Config::NodeNoLabel]));
+        let _ = f.write_all(&output.as_bytes());
+    }
+
     pub fn write_val_to_file<T: std::fmt::Debug> (node_value: &HashMap<usize,T>, dir: String) {
         let mut f = File::create(dir).unwrap();
         for (k,v) in node_value {
@@ -144,11 +172,11 @@ pub mod utils {
 pub mod sir {
     extern crate petgraph;
     
-    use petgraph::{graph::{NodeIndex, Graph}, visit::{IntoNodeReferences}};
+    use petgraph::{graph::NodeIndex, visit::IntoNodeReferences};
     use petgraph::prelude::UnGraph;
     use std::collections::HashMap;
 
-    use super::utils::{rand_state, vec_to_graph};
+    use super::utils::rand_state;
 
     #[derive(Debug,PartialEq)]
     enum Condition {
@@ -216,11 +244,11 @@ pub mod sir {
 }
 
 pub mod fuzzy_traceback {
-    use std::{collections::HashMap};
+    use std::collections::HashMap;
 
-    use petgraph::{graph::{NodeIndex, Graph}, visit::{IntoNodeReferences, NodeRef, IntoNeighbors}, Direction::{self, Incoming, Outgoing}};
+    use petgraph::{graph::{NodeIndex, Graph}, visit::IntoNodeReferences, Direction::{self, Incoming, Outgoing}};
     use petgraph::prelude::UnGraph;
-    use probability::{distribution::Binomial, prelude::Discrete, source};
+    use probability::{distribution::Binomial, prelude::Discrete};
 
     use super::{utils::{rand_state, vec_to_graph, hmap_to_graph}, sir::vec_edge_exists};
 
@@ -634,7 +662,7 @@ mod tests {
     extern crate test;
     use std::collections::HashMap;
 
-    use crate::simulation::{sir, fuzzy_traceback::{fuzz_bfs, self, degree_analysis, fuzzy_trace_ours, calc_fuz_val}, utils::{import_graph, graph_to_dot, fuz_val_to_graph, write_val_to_file, hmap_to_graph, vec_to_graph, gen_raw_data_file}};
+    use crate::simulation::{sir, fuzzy_traceback::{fuzz_bfs, self, degree_analysis, fuzzy_trace_ours, calc_fuz_val}, utils::{import_graph, graph_to_dot, fuz_val_to_graph, write_val_to_file, hmap_to_graph, vec_to_graph, gen_raw_data_file, graph_to_dot_for_draw}};
 
     use super::utils::dedup_in_db_file;
   
@@ -654,20 +682,20 @@ mod tests {
 
     #[test]
     fn test_sir_spread() {
-        let dir = "./graphs/message.txt";
+        let dir = "./graphs/email.txt";
         let sys_graph = import_graph(dir.to_string());
         println!("{:?}, {:?}", sys_graph.node_count(), sys_graph.edge_count());
-        let (infected_edges, _) = sir::sir_spread(&10, &0.05, &0.6, &sys_graph.clone());
+        let (infected_edges, _) = sir::sir_spread(&10, &0.04, &0.6, &sys_graph.clone());
         let (fwd_graph, _) = vec_to_graph(&infected_edges);
         println!("{:?}, {:?}", fwd_graph.node_count(), fwd_graph.edge_count());
 
-        graph_to_dot(&fwd_graph, "output/fwd_graph.dot".to_string());
+        // graph_to_dot(&fwd_graph, "output/fwd_graph.dot".to_string());
     }
 
     #[test]
     fn test_fuzz_bfs() {
         let sys_graph = import_graph("./graphs/message.txt".to_string());
-        let (infected_edges, _) = sir::sir_spread(&10, &0.05, &0.6, &sys_graph.clone());
+        let (infected_edges, _) = sir::sir_spread(&10, &0.03, &0.6, &sys_graph.clone());
         let (fwd_graph, sys_fwd_map) = vec_to_graph(&infected_edges);
 println!("Forward Graph: node {:?}, edge {:?}, mean degree: {:?}", fwd_graph.node_count(), fwd_graph.edge_count(), degree_analysis(&fwd_graph, &sys_graph));
 graph_to_dot(&fwd_graph, "./output/fwd_graph.dot".to_string());
@@ -680,12 +708,13 @@ graph_to_dot(&fuzz_graph, "./output/fuzz_graph.dot".to_string());
 
     #[test]
     fn test_fuzz_ours() {
-        let sys_graph = import_graph("./graphs/message.txt".to_string());
+        let sys_graph = import_graph("./graphs/email.txt".to_string());
         let trace_fpr: f32 = 0.01;
 
         loop {
             // 1.Generate a forward graph that start in node 719 by SIR algorithm
-            let (infected_edges, node_src) = sir::sir_spread(&20, &0.05, &0.6, &sys_graph.clone());
+            // In our paper, we present the results of SIR = (5%, 60%) in College IM dataset, and SIR (3.5%, 70%) in EU email dataset.
+            let (infected_edges, node_src) = sir::sir_spread(&20, &0.03, &0.8, &sys_graph.clone());
             if infected_edges.len() < 200 {
                 continue;
             }
@@ -700,7 +729,7 @@ graph_to_dot(&fuzz_graph, "./output/fuzz_graph.dot".to_string());
             let (mut bwd_traced_edges, mut fwd_traced_edges, max_depth) = fuzzy_trace_ours(&sys_graph, &fwd_graph, &fwd_to_sys_id_map, &node_src, &start_node, &trace_fpr);
 
             // 3. Compute fuzzy values of nodes in fuzzy graph by the membership function
-            let (node_tpr, edge_fpr) = calc_fuz_val(&(trace_fpr as f64), &max_depth, &start_node, &mut bwd_traced_edges, &mut fwd_traced_edges, &sys_graph);
+            let (mut node_tpr, edge_fpr) = calc_fuz_val(&(trace_fpr as f64), &max_depth, &start_node, &mut bwd_traced_edges, &mut fwd_traced_edges, &sys_graph);
 
             // 3-1. insert deleted edges from bwd_edges to fwd_edges
             bwd_traced_edges.into_iter().filter(|((snd, rcv), _)| {
@@ -717,11 +746,15 @@ graph_to_dot(&fuzz_graph, "./output/fuzz_graph.dot".to_string());
             graph_to_dot(&fuzzy_graph, "./output/graph_fuzzy.dot".to_string());
 
             // 3-2. generate raw data file, where one line a tuple (node_id, is_true_positive, fuzzy_val)
+            node_tpr.insert(start_node, 0.90);
             gen_raw_data_file(&node_tpr, &fwd_to_sys_id_map, "../Traceability-Evaluation/inputs/data_fuzzy_value.txt".to_string());
 
             let sys_to_fwd_id_map: HashMap<usize,usize> = fwd_to_sys_id_map.iter().map(|(k,v)|
                 (v.index(), *k)).collect();
+            // sys_to_fwd_id_map.remove(&start_node);
             write_val_to_file(&sys_to_fwd_id_map, "../Traceability-Evaluation/inputs/id_map_fwd.txt".to_string());
+
+            graph_to_dot_for_draw(&infected_edges, &fwd_traced_edges, &sys_graph, & "./output/full_graph_for_paper.dot".to_string());
             
             break;
         }
