@@ -250,7 +250,9 @@ pub mod fuzzy_traceback {
     use petgraph::prelude::UnGraph;
     use probability::{distribution::Binomial, prelude::Discrete};
 
-    use super::{utils::{rand_state, vec_to_graph, hmap_to_graph}, sir::vec_edge_exists};
+    use crate::simulation::sir;
+
+    use super::{utils::{rand_state, vec_to_graph, hmap_to_graph, import_graph}, sir::vec_edge_exists};
 
     #[derive(Debug, Clone, PartialEq)]
     pub struct TraceMd {
@@ -660,7 +662,7 @@ pub mod fuzzy_traceback {
 #[cfg(test)]
 mod tests {
     extern crate test;
-    use std::collections::HashMap;
+    use std::{collections::HashMap, fs::File, io::Write, fmt::write};
 
     use crate::simulation::{sir, fuzzy_traceback::{fuzz_bfs, self, degree_analysis, fuzzy_trace_ours, calc_fuz_val}, utils::{import_graph, graph_to_dot, fuz_val_to_graph, write_val_to_file, hmap_to_graph, vec_to_graph, gen_raw_data_file, graph_to_dot_for_draw}};
 
@@ -695,26 +697,26 @@ mod tests {
     #[test]
     fn test_fuzz_bfs() {
         let sys_graph = import_graph("./graphs/message.txt".to_string());
-        let (infected_edges, _) = sir::sir_spread(&10, &0.03, &0.6, &sys_graph.clone());
+        let (infected_edges, _) = sir::sir_spread(&20, &0.03, &0.4, &sys_graph.clone());
         let (fwd_graph, sys_fwd_map) = vec_to_graph(&infected_edges);
-println!("Forward Graph: node {:?}, edge {:?}, mean degree: {:?}", fwd_graph.node_count(), fwd_graph.edge_count(), degree_analysis(&fwd_graph, &sys_graph));
-graph_to_dot(&fwd_graph, "./output/fwd_graph.dot".to_string());
+        println!("Forward Graph: node {:?}, edge {:?}, mean degree: {:?}", fwd_graph.node_count(), fwd_graph.edge_count(), degree_analysis(&fwd_graph, &sys_graph));
+        graph_to_dot(&fwd_graph, "./output/fwd_graph.dot".to_string());
         // start from a leaf node
         let start_node = fuzzy_traceback::any_leaf(&fwd_graph);
         let (fuzz_graph, _) = fuzz_bfs(&sys_graph, &fwd_graph, &sys_fwd_map, &start_node, &0.01);
-println!("Fuzzy Graph: node {:?}, edge {:?}, mean degree: {:?}", fuzz_graph.node_count(), fuzz_graph.edge_count(), degree_analysis(&fuzz_graph, &sys_graph));
-graph_to_dot(&fuzz_graph, "./output/fuzz_graph.dot".to_string());
+        println!("Fuzzy Graph: node {:?}, edge {:?}, mean degree: {:?}", fuzz_graph.node_count(), fuzz_graph.edge_count(), degree_analysis(&fuzz_graph, &sys_graph));
+        graph_to_dot(&fuzz_graph, "./output/fuzz_graph.dot".to_string());
     }
 
     #[test]
     fn test_fuzz_ours() {
-        let sys_graph = import_graph("./graphs/email.txt".to_string());
+        let sys_graph = import_graph("./graphs/message.txt".to_string());
         let trace_fpr: f32 = 0.01;
 
         loop {
             // 1.Generate a forward graph that start in node 719 by SIR algorithm
             // In our paper, we present the results of SIR = (5%, 60%) in College IM dataset, and SIR (3.5%, 70%) in EU email dataset.
-            let (infected_edges, node_src) = sir::sir_spread(&20, &0.03, &0.8, &sys_graph.clone());
+            let (infected_edges, node_src) = sir::sir_spread(&20, &0.03, &0.4, &sys_graph.clone());
             if infected_edges.len() < 200 {
                 continue;
             }
