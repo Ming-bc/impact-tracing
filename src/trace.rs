@@ -386,23 +386,15 @@ pub mod tests {
     extern crate base64;
     extern crate test;
 
-    use core::time;
-    use std::collections::hash_map::DefaultHasher;
-    use std::collections::{HashMap, HashSet};
-    use std::hash::{Hasher, Hash};
-    use std::thread;
-
+    use std::{collections::{hash_map::DefaultHasher, HashMap, HashSet}, hash::{Hasher, Hash}, thread, time::{SystemTime, Duration, UNIX_EPOCH}};
+                
     use base64::encode;
     use rand;
     
-    use crate::db::bloom_filter;
-    use crate::message::messaging;
-    use crate::tool::algos;
-    use crate::db::redis_pack;
+    use crate::{db::{bloom_filter, redis_pack}, message::messaging, tool::algos};
     use crate::trace::traceback::{self, TraceData};
     use crate::message::messaging::{FwdType, MsgPacket, Session, MsgReport, Edge};
-    use std::time::{SystemTime, Duration, UNIX_EPOCH};
-
+    
     const OURS_BRANCH: u32 = 25;
 
     #[test]
@@ -500,8 +492,8 @@ println!("Gen finish");
 
     #[test]
     fn test_tracing_in_path_for_paper() {
-        let loop_index: usize = 1;
-        let path_length: Vec<u32> = vec![50,100,150,200,250,300,1093];
+        let loop_index: usize = 10;
+        let path_length: Vec<u32> = vec![50,100,150,200,250,300];
         let mut count_vec: Vec<f64> = Vec::new();
 
         path_length.iter().for_each(|length| {
@@ -512,8 +504,8 @@ println!("Gen finish");
 
     #[test]
     fn test_tracing_in_tree_for_paper() {
-        let branch_factor_list: Vec<u32> = vec![3,4,5,6,7,8];
-        let depth_list: Vec<u32> = vec![4];
+        let branch_factor_list: Vec<u32> = vec![3];
+        let depth_list: Vec<u32> = vec![3,4,5,6,7,8];
         let loop_index: usize = 10;
         let mut count_vec: Vec<f64> = Vec::new();
         

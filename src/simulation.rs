@@ -662,7 +662,7 @@ pub mod fuzzy_traceback {
 #[cfg(test)]
 mod tests {
     extern crate test;
-    use std::{collections::HashMap, fs::File, io::Write, fmt::write};
+    use std::collections::HashMap;
 
     use crate::simulation::{sir, fuzzy_traceback::{fuzz_bfs, self, degree_analysis, fuzzy_trace_ours, calc_fuz_val}, utils::{import_graph, graph_to_dot, fuz_val_to_graph, write_val_to_file, hmap_to_graph, vec_to_graph, gen_raw_data_file, graph_to_dot_for_draw}};
 
@@ -716,7 +716,7 @@ mod tests {
         loop {
             // 1.Generate a forward graph that start in node 719 by SIR algorithm
             // In our paper, we present the results of SIR = (5%, 60%) in College IM dataset, and SIR (3.5%, 70%) in EU email dataset.
-            let (infected_edges, node_src) = sir::sir_spread(&20, &0.03, &0.4, &sys_graph.clone());
+            let (infected_edges, node_src) = sir::sir_spread(&20, &0.08, &0.5, &sys_graph.clone());
             if infected_edges.len() < 200 {
                 continue;
             }

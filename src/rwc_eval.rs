@@ -149,8 +149,8 @@ mod tests {
     #[test]
     fn test_gen_fwd_fuzz_edges() {
         let sys_graph = import_graph("./graphs/message.txt".to_string());
-        let s2i_list = vec![0.03];
-        let i2r_list = vec![0.4, 0.5, 0.6, 0.7, 0.8, 0.9];
+        let s2i_list = vec![0.03, 0.04, 0.05, 0.06, 0.07, 0.08];
+        let i2r_list = vec![0.5];
         let loop_index = 20;
 
         let mut count = 0;

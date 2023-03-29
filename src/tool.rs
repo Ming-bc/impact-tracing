@@ -6,7 +6,7 @@ pub mod utils{
         generic_array::GenericArray,
     };
     use hmac::{Hmac, Mac};
-    use sha3::{Digest, Sha3_256};
+    use sha3::{Digest, Sha3_256, Shake128};
     
 
     // input abitray string, output 128bit hash
@@ -29,7 +29,7 @@ pub mod utils{
         y.copy_from_slice(&mac.result().code().as_slice());
         y
     }
-    
+
     pub fn encipher(k: &[u8; 16], plaintext: &[u8; 16]) -> [u8; 16] {
         let mut ciphertext: [u8; 16] = Default::default();
         let cipher = Aes128::new(GenericArray::from_slice(k));
@@ -126,6 +126,8 @@ mod tests {
     use crate::tool::algos;
     use test::Bencher;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    use super::utils;
 
     // fn init_logger() {
     //     //env_logger::init();
