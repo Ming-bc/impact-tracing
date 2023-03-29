@@ -716,7 +716,7 @@ mod tests {
         loop {
             // 1.Generate a forward graph that start in node 719 by SIR algorithm
             // In our paper, we present the results of SIR = (5%, 60%) in College IM dataset, and SIR (3.5%, 70%) in EU email dataset.
-            let (infected_edges, node_src) = sir::sir_spread(&20, &0.08, &0.5, &sys_graph.clone());
+            let (infected_edges, node_src) = sir::sir_spread(&20, &0.08, &0.7, &sys_graph.clone());
             if infected_edges.len() < 200 {
                 continue;
             }

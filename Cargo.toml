@@ -7,7 +7,7 @@ edition = "2021"
 
 [dependencies]
 aes = "0.8.2"
-sha3 = "0.8.2"
+sha3 = "0.10.6"
 hmac = "0.7.1"
 rand = "0.8.5"
 base64 = "0.13.1"
@@ -17,6 +17,7 @@ futures = "0.3"
 petgraph = "0.6.2"
 lazy_static = "1.4.0"
 probability = "0.20.3"
+tiny-keccak = { version = "2.0.0", features = ["kmac"] }
 
 [dependencies.redis]
 version = "*"

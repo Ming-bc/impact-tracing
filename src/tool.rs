@@ -6,7 +6,8 @@ pub mod utils{
         generic_array::GenericArray,
     };
     use hmac::{Hmac, Mac};
-    use sha3::{Digest, Sha3_256, Shake128};
+    use sha3::{Digest, digest::{Update, ExtendableOutput, XofReader}, Sha3_256, Shake128};
+    use tiny_keccak::{Kmac, Hasher};
     
 
     // input abitray string, output 128bit hash
@@ -15,19 +16,35 @@ pub mod utils{
         y.copy_from_slice(&Sha3_256::digest(x).as_slice()[0..16]);
         y
     }
-    
+
+    pub fn hash_shake(x: &[u8]) -> [u8; 16] {
+        let mut y: [u8; 16] = Default::default();
+        let mut shake = Shake128::default();
+        shake.update(x);
+        shake.finalize_xof().read(&mut y);
+        y
+    }
+
     // fn prf(k: &[u8; 16], x: &[u8]) -> [u8; 16] {
     //     let mut y: [u8; 16] = Default::default();
     //     y.copy_from_slice(&Sha3_256::digest(&[k, x].concat()).as_slice()[0..16]);
     //     y
     // }
     
-    pub fn crprf(k: &[u8; 16], x: &[u8]) -> [u8; 32] {
-        let mut y: [u8; 32] = Default::default();
-        let mut mac = Hmac::<Sha3_256>::new_varkey(k).unwrap();
-        mac.input(x);
-        y.copy_from_slice(&mac.result().code().as_slice());
-        y
+    // pub fn crprf(k: &[u8; 16], x: &[u8]) -> [u8; 32] {
+    //     let mut y: [u8; 32] = Default::default();
+    //     let mut mac = Hmac::<Sha3_256>::new_varkey(k).unwrap();
+    //     mac.input(x);
+    //     y.copy_from_slice(&mac.result().code().as_slice());
+    //     y
+    // }
+
+    pub fn crprf(k: &[u8; 16], x: &[u8]) -> [u8; 6] {
+        let mut z: [u8; 6] = Default::default();
+        let mut kmac = Kmac::v128(k, b"");
+        kmac.update(x);
+        kmac.finalize(&mut z);
+        z
     }
 
     pub fn encipher(k: &[u8; 16], plaintext: &[u8; 16]) -> [u8; 16] {
@@ -77,13 +94,13 @@ pub mod algos{
     }
 
     // tag_gen: generate a message tag
-    pub fn tag_gen(tag_key: &[u8; 16], message: &[u8]) -> [u8; 32] {
+    pub fn tag_gen(tag_key: &[u8; 16], message: &[u8]) -> [u8; 6] {
         let hash_msg = hash(message);
         crprf(tag_key, &hash_msg)
     }
 
     // proc_tag: process a tag
-    pub fn proc_tag(uid: &u32, bk: &[u8; 16], tag: &[u8; 32]) -> [u8; 32] {
+    pub fn proc_tag(uid: &u32, bk: &[u8; 16], tag: &[u8; 6]) -> [u8; 6] {
         let uid_byte: [u8; 4] = uid.to_be_bytes();
         let key: [u8; 20] = {
             let mut key: [u8; 20] = [0; 20];
@@ -96,7 +113,7 @@ pub mod algos{
         crprf(&hash_key, tag)
     }
 
-    pub fn store_tag_gen(uid: &u32, key: &[u8; 16], bk: &[u8; 16], message: &[u8]) -> [u8; 32] {
+    pub fn store_tag_gen(uid: &u32, key: &[u8; 16], bk: &[u8; 16], message: &[u8]) -> [u8; 6] {
         let tag = tag_gen(key, message);
         proc_tag(uid, bk, &tag)
     }
@@ -107,7 +124,7 @@ pub mod algos{
         bloom_filter::exists(&tag)
     }
 
-    pub fn m_tag_exists(tags: &Vec<[u8; 32]>) -> Vec<bool> {
+    pub fn m_tag_exists(tags: &Vec<[u8; 6]>) -> Vec<bool> {
         let mut tag_str: Vec<String> = Vec::new();
         for bytes in tags {
             let bytes_to_str = encode(&bytes[..]);
@@ -122,7 +139,7 @@ pub mod algos{
 mod tests {
     extern crate test;
   
-    use crate::tool::utils::{encipher, decipher};
+    use crate::tool::utils::{encipher, decipher, crprf};
     use crate::tool::algos;
     use test::Bencher;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -192,6 +209,13 @@ println!("Runtime {:?}", second - first);
         let bk = rand::random::<[u8; 16]>();
 
         b.iter(|| test::black_box(algos::store_tag_gen(&uid, &key, &bk, &message)));
+    }
+
+    #[bench]
+    fn bench_hash(b: &mut Bencher) {
+        let message = rand::random::<[u8; 16]>();
+
+        b.iter(|| test::black_box(utils::hash_shake(&message)));
     }
 
 }

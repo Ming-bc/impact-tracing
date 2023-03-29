@@ -31,7 +31,7 @@ pub mod messaging {
     #[derive(Serialize, Deserialize, Debug)]
     pub struct MsgPacket {
         pub key: [u8; 16],
-        pub tag: [u8; 32],
+        pub tag: [u8; 6],
         pub payload: String, // base64 encode string
     }
 

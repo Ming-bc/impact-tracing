@@ -52,7 +52,7 @@ pub mod traceback {
         key_vec
     }
     
-    fn compute_bwd_fwd_tags(uid: &u32, key: &[u8;16], sender: &u32, sid: &String, message: &String) -> ([u8;16], [u8;32], [u8;32]){
+    fn compute_bwd_fwd_tags(uid: &u32, key: &[u8;16], sender: &u32, sid: &String, message: &String) -> ([u8;16], [u8;6], [u8;6]){
         let binding = decode(message).unwrap();
         let msg_bytes = <&[u8]>::try_from(&binding[..]).unwrap();
         let bag_key = <&[u8; 16]>::try_from(&decode(sid).unwrap()[..]).unwrap().clone();
@@ -62,7 +62,7 @@ pub mod traceback {
         (next_key, bwd_tag, fwd_tag)
     }
 
-    fn compute_fwd_tags(key: &[u8;16], sender: &u32, sid: &String, message: &String) -> ([u8;16], [u8;32]){
+    fn compute_fwd_tags(key: &[u8;16], sender: &u32, sid: &String, message: &String) -> ([u8;16], [u8;6]){
         let binding = decode(message).unwrap();
         let msg_bytes = <&[u8]>::try_from(&binding[..]).unwrap();
 
@@ -492,7 +492,7 @@ println!("Gen finish");
 
     #[test]
     fn test_tracing_in_path_for_paper() {
-        let loop_index: usize = 10;
+        let loop_index: usize = 20;
         let path_length: Vec<u32> = vec![50,100,150,200,250,300];
         let mut count_vec: Vec<f64> = Vec::new();
 
@@ -500,6 +500,7 @@ println!("Gen finish");
             count_vec.push(test_tracing_in_abitary_path(&length, &loop_index));
         });
         println!("{:?}", count_vec);
+        redis_pack::empty();
     }
 
     #[test]
@@ -516,6 +517,7 @@ println!("Gen finish");
             });
         });
         println!("{:?}", count_vec);
+        redis_pack::empty();
     }
 
     fn test_tracing_in_abitary_path(path_length: &u32, loop_index: &usize) -> f64 {

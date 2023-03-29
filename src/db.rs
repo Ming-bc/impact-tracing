@@ -25,7 +25,7 @@ pub mod bloom_filter {
         Ok(BLOOM.get_connection()?)
     }
 
-    pub fn add(bytes: &[u8; 32]) -> redis::RedisResult<()> {
+    pub fn add(bytes: &[u8; 6]) -> redis::RedisResult<()> {
         let mut conn = get_bf_conn().unwrap();
         let msg = encode(&bytes[..]);
         let _ : () = redis::cmd("bf.add").arg(BF_NAME).arg(msg).query(&mut conn)?;
@@ -38,7 +38,7 @@ pub mod bloom_filter {
         Ok(())
     }
     
-    pub fn exists(bytes: &[u8; 32]) -> bool {
+    pub fn exists(bytes: &[u8; 6]) -> bool {
         let mut conn = get_bf_conn().unwrap();
         let msg = encode(&bytes[..]);
         redis::cmd("bf.exists").arg(BF_NAME).arg(msg).query(&mut conn).unwrap()
@@ -307,8 +307,8 @@ pub mod tests {
 
     #[test]
     fn bf_add_exists() {
-        let bytes = random::<[u8; 32]>();
-        let bytes_2 = random::<[u8; 32]>();
+        let bytes = random::<[u8; 6]>();
+        let bytes_2 = random::<[u8; 6]>();
         
         assert!(bloom_filter::add(&bytes).is_ok());
         assert!(bloom_filter::exists(&bytes));
@@ -397,7 +397,7 @@ println!("{:?}", result);
 
     #[bench]
     fn bench_bloom_filter_exist(b: &mut Bencher) {
-        let bytes = random::<[u8; 32]>();
+        let bytes = random::<[u8; 6]>();
         assert!(bloom_filter::add(&bytes).is_ok());
         b.iter(|| bloom_filter::exists(&bytes));
     }
@@ -406,7 +406,7 @@ println!("{:?}", result);
     fn bench_bloom_filter_mexists(b: &mut Bencher) {
         let mut tags: Vec<String> = Vec::new();
         for i in 0..1 {
-            let bytes: [u8; 32] = random::<[u8; 32]>();
+            let bytes: [u8; 6] = random::<[u8; 6]>();
             let tag: String = encode(&bytes[..]).clone();
             assert!(bloom_filter::add(&bytes).is_ok());
             tags.push(tag);
