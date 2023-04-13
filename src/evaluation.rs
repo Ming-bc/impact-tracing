@@ -145,7 +145,7 @@ pub mod eval {
     fn store_tag_gen(sess:Session, packet: MsgPacket) -> String {
         let sid = sess.id;
         let bk = <&[u8; 16]>::try_from(&decode(sid).unwrap()[..]).unwrap().clone();
-        encode(algos::proc_tag(&sess.sender, &bk, &packet.tag))
+        encode(algos::proc_tag( &bk, &packet.tag))
     }
     // generate a new edge from a sender to a receiver
     pub fn new_edge_gen(message: &str, sender: &u32, receiver: &u32) -> MsgPacket {

@@ -507,7 +507,7 @@ println!("Gen finish");
     fn test_tracing_in_tree_for_paper() {
         let branch_factor_list: Vec<u32> = vec![3];
         let depth_list: Vec<u32> = vec![3,4,5,6,7,8];
-        let loop_index: usize = 10;
+        let loop_index: usize = 20;
         let mut count_vec: Vec<f64> = Vec::new();
         
         depth_list.iter().for_each(|depth| {
@@ -613,7 +613,7 @@ println!("Gen finish");
         let bk_16 = <&[u8; 16]>::try_from(bk).unwrap();
         let packet = messaging::fwd_msg(&prev_key, &vec![*bk_16], message, FwdType::Receive);
         let proc_packet = MsgPacket::new(&packet.key, message);
-        let proc_tag = algos::proc_tag(sender, bk_16, &proc_packet.tag);
+        let proc_tag = algos::proc_tag(bk_16, &proc_packet.tag);
         (packet, encode(proc_tag))
     }
 

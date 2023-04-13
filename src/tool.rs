@@ -33,15 +33,15 @@ pub mod utils{
     
     // pub fn crprf(k: &[u8; 16], x: &[u8]) -> [u8; 32] {
     //     let mut y: [u8; 32] = Default::default();
-    //     let mut mac = Hmac::<Sha3_256>::new_varkey(k).unwrap();
+    //     let mut mac = Hmac::<Sha3_256>::
     //     mac.input(x);
     //     y.copy_from_slice(&mac.result().code().as_slice());
     //     y
     // }
 
-    pub fn crprf(k: &[u8; 16], x: &[u8]) -> [u8; 6] {
-        let mut z: [u8; 6] = Default::default();
-        let mut kmac = Kmac::v128(k, b"");
+    pub fn crprf(k: &[u8; 16], x: &[u8]) -> [u8; 32] {
+        let mut z: [u8; 32] = Default::default();
+        let mut kmac = Kmac::v256(k, b"");
         kmac.update(x);
         kmac.finalize(&mut z);
         z
@@ -94,28 +94,28 @@ pub mod algos{
     }
 
     // tag_gen: generate a message tag
-    pub fn tag_gen(tag_key: &[u8; 16], message: &[u8]) -> [u8; 6] {
+    pub fn tag_gen(tag_key: &[u8; 16], message: &[u8]) -> [u8; 32] {
         let hash_msg = hash(message);
         crprf(tag_key, &hash_msg)
     }
 
     // proc_tag: process a tag
-    pub fn proc_tag(uid: &u32, bk: &[u8; 16], tag: &[u8; 6]) -> [u8; 6] {
-        let uid_byte: [u8; 4] = uid.to_be_bytes();
-        let key: [u8; 20] = {
-            let mut key: [u8; 20] = [0; 20];
-            let (one, two) = key.split_at_mut(bk.len());
-            one.copy_from_slice(bk);
-            two.copy_from_slice(&uid_byte);
-            key
-        };
-        let hash_key = hash(&key);
-        crprf(&hash_key, tag)
+    pub fn proc_tag(bk: &[u8; 16], tag: &[u8; 32]) -> [u8; 6] {
+        // combine bk and tag in a 48 bytes array
+        let mut bk_tag: [u8; 48] = [0; 48];
+        let (one, two) = bk_tag.split_at_mut(bk.len());
+        one.copy_from_slice(bk);
+        two.copy_from_slice(tag);
+        
+        // return the first 6 bytes of the hash of the bk_tag
+        let mut key: [u8; 6] = Default::default();
+        key.copy_from_slice(&hash(&bk_tag).as_slice()[0..6]);
+        key
     }
 
     pub fn store_tag_gen(uid: &u32, key: &[u8; 16], bk: &[u8; 16], message: &[u8]) -> [u8; 6] {
         let tag = tag_gen(key, message);
-        proc_tag(uid, bk, &tag)
+        proc_tag(bk, &tag)
     }
 
     pub fn tag_exists(uid: &u32, key: &[u8; 16], bk: &[u8; 16], message: &[u8]) -> bool{

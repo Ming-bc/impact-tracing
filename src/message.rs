@@ -31,7 +31,7 @@ pub mod messaging {
     #[derive(Serialize, Deserialize, Debug)]
     pub struct MsgPacket {
         pub key: [u8; 16],
-        pub tag: [u8; 6],
+        pub tag: [u8; 32],
         pub payload: String, // base64 encode string
     }
 
@@ -67,7 +67,7 @@ pub mod messaging {
         }
     }
 
-    #[derive(Serialize, Deserialize, Debug)]
+    #[derive(Serialize, Deserialize, Debug, Clone)]
     pub struct Session {
         pub id: String,
         pub sender: u32,
@@ -114,7 +114,7 @@ pub mod messaging {
     pub fn proc_msg(sess: Session, packet: MsgPacket) -> bool {
         let sid = redis_pack::query_sid(&sess.sender, &sess.receiver).clone();
         let bk = <&[u8; 16]>::try_from(&decode(sid).unwrap()[..]).unwrap().clone();
-        let store_tag = proc_tag(&sess.sender, &bk, &packet.tag);
+        let store_tag = proc_tag(&bk, &packet.tag);
         bloom_filter::add(&store_tag).is_ok()
     }
 
@@ -151,6 +151,7 @@ mod tests {
 
     use base64::{encode, decode};
     use test::Bencher;
+    use crate::db::{redis_pack, bloom_filter};
     use crate::message::messaging::*;
     use crate::tool::algos::*;
 
@@ -200,6 +201,41 @@ mod tests {
         assert!(vrf_report(sess_sub, report), "Verify failed");
     }
 
+    // Bench cannot test the runtime of proc_tag, since it contains DB queries
+    #[test]
+    fn test_process_message() {
+        let snd_id: u32 = rand::random::<u32>();
+        let rcv_id: u32 = rand::random::<u32>();
+        let sid = encode(&rand::random::<[u8; 16]>()[..]);
+        let ses = Session::new(&sid, &snd_id, &rcv_id);
+        let message = encode(&rand::random::<[u8; 16]>()[..]);
+        let tag = MsgPacket::new(&rand::random::<[u8; 16]>(), &message).tag;
+
+        redis_pack::pipe_add(&mut vec![ses.clone()]).ok().unwrap();
+
+        // test proc_msg loop times
+        let mut count = 0.0;
+        let loop_i: u32 = 500;
+        for _i in 0..loop_i {
+            let start = std::time::Instant::now();
+            proc_msg_for_test(&ses, &tag);
+            let end = std::time::Instant::now();
+            let dur = end.duration_since(start);
+            count += (dur.as_micros() as f64) / (loop_i as f64);
+        }
+        
+        println!("proc_msg average time: {}us", count);
+    }
+
+    // This function is identical to proc_msg without MsgPacket packing
+    fn proc_msg_for_test(sess: &Session, tag: &[u8; 32]) -> bool {
+        let sid = redis_pack::query_sid(&sess.sender, &sess.receiver).clone();
+        let binding = decode(sid).unwrap();
+        let bk = <&[u8; 16]>::try_from(&binding[..]).unwrap();
+        let store_tag = proc_tag(&bk, tag);
+        bloom_filter::add(&store_tag).is_ok()
+    }
+
     #[bench]
     fn bench_new_message(b: &mut Bencher) {
         let bk = rand::random::<[u8; 16]>();
@@ -219,14 +255,12 @@ mod tests {
     }
 
     #[bench]
-    fn bench_process_message(b: &mut Bencher) {
-        let snd_id: u32 = 2806396777;
-        let rcv_id: u32 = 259328394;
+    fn bench_send_msg(b: &mut Bencher) {
+        let bk = rand::random::<[u8; 16]>();
+        let message = rand::random::<[u8; 16]>();
+        let key = rand::random::<[u8; 16]>();
 
-        let message = encode(&rand::random::<[u8; 16]>()[..]);
-        let tag_key = rand::random::<[u8; 16]>();
-
-        b.iter(|| proc_msg(Session::new(&0.to_string(), &snd_id, &rcv_id), MsgPacket::new(&tag_key, &message)));
+        b.iter(||send_msg_for_test(&bk, &key, &message));
     }
 
     #[bench]
@@ -236,7 +270,12 @@ mod tests {
         let tag_key = rand::random::<[u8; 16]>();
         let packet = MsgPacket::new(&tag_key, &msg_str);
 
-        b.iter(||receive_msg(MsgPacket { key: packet.key, tag: packet.tag, payload: msg_str.clone() }));
+        b.iter(|| packet.vrf_tag());
+    }
+
+    fn send_msg_for_test(bk: &[u8; 16], key: &[u8; 16], message: &[u8]) {
+        let k_p = next_key(key, bk);
+        tag_gen(&k_p, message);
     }
 
 }

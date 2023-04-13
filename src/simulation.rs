@@ -711,12 +711,12 @@ mod tests {
     #[test]
     fn test_fuzz_ours() {
         let sys_graph = import_graph("./graphs/message.txt".to_string());
-        let trace_fpr: f32 = 0.01;
+        let trace_fpr: f32 = 0.005;
 
         loop {
             // 1.Generate a forward graph that start in node 719 by SIR algorithm
-            // In our paper, we present the results of SIR = (5%, 60%) in College IM dataset, and SIR (3.5%, 70%) in EU email dataset.
-            let (infected_edges, node_src) = sir::sir_spread(&20, &0.08, &0.7, &sys_graph.clone());
+            // In our paper, we present the results of SIR = (5%, 60%) in College IM dataset, and SIR (3%, 70%) in EU email dataset.
+            let (infected_edges, node_src) = sir::sir_spread(&20, &0.05, &0.6, &sys_graph.clone());
             if infected_edges.len() < 200 {
                 continue;
             }
