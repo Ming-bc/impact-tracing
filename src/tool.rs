@@ -5,22 +5,21 @@ pub mod utils{
         BlockEncrypt, BlockDecrypt, KeyInit,
         generic_array::GenericArray,
     };
-    use hmac::{Hmac, Mac};
+    use base64::decode;
     use sha3::{Digest, digest::{Update, ExtendableOutput, XofReader}, Sha3_256, Shake128};
     use tiny_keccak::{Kmac, Hasher};
-    
 
     // input abitray string, output 128bit hash
-    pub fn hash(x: &[u8]) -> [u8; 16] {
+    pub fn hash(x: &String) -> [u8; 16] {
         let mut y: [u8; 16] = Default::default();
         y.copy_from_slice(&Sha3_256::digest(x).as_slice()[0..16]);
         y
     }
 
-    pub fn hash_shake(x: &[u8]) -> [u8; 16] {
+    pub fn hash_shake(x: &String) -> [u8; 16] {
         let mut y: [u8; 16] = Default::default();
         let mut shake = Shake128::default();
-        shake.update(x);
+        shake.update(&decode(x).unwrap());
         shake.finalize_xof().read(&mut y);
         y
     }
@@ -69,59 +68,54 @@ pub mod utils{
 
 pub mod algos{
     extern crate base64;
+    extern crate lazy_static;
 
     use base64::encode;
     use crate::tool::utils::{hash, crprf, encipher, decipher};
     use crate::db::bloom_filter;
+    use vrf::openssl::{CipherSuite, ECVRF};
+    use vrf::VRF;
+
+    pub fn tk_gen(sik: &[u8; 16], rid: &u32) -> [u8; 16] {
+        // convert sik and rid to string 
+        hash(&(encode(sik) + &rid.to_string()))
+    }
 
     // new_key_gen: generate a ramdom key
-    pub fn new_key_gen(bk: &[u8; 16]) -> [u8; 16] {
+    pub fn new_key_gen(tk: &[u8; 16]) -> [u8; 16] {
         let key = rand::random::<[u8; 16]>();
-        let new_key = encipher(bk, &key);
+        let new_key = encipher(tk, &key);
         new_key
     }
 
     // prev_key: generate the prev node's key
-    pub fn prev_key(key: &[u8; 16], bk: &[u8; 16]) -> [u8; 16] {
-        let old_key = decipher(bk, key);
+    pub fn prev_key(key: &[u8; 16], tk: &[u8; 16]) -> [u8; 16] {
+        let old_key = decipher(tk, key);
         old_key
     }
 
     // next_key: generate the next node's key
-    pub fn next_key(key: &[u8; 16], bk: &[u8; 16]) -> [u8; 16] {
-        let new_key = encipher(bk, key);
+    pub fn next_key(key: &[u8; 16], tk: &[u8; 16]) -> [u8; 16] {
+        let new_key = encipher(tk, key);
         new_key
     }
 
     // tag_gen: generate a message tag
-    pub fn tag_gen(tag_key: &[u8; 16], message: &[u8]) -> [u8; 32] {
+    pub fn prf_gen(tag_key: &[u8; 16], message: &String) -> [u8; 32] {
         let hash_msg = hash(message);
         crprf(tag_key, &hash_msg)
     }
 
-    // proc_tag: process a tag
-    pub fn proc_tag(bk: &[u8; 16], tag: &[u8; 32]) -> [u8; 6] {
-        // combine bk and tag in a 48 bytes array
-        let mut bk_tag: [u8; 48] = [0; 48];
-        let (one, two) = bk_tag.split_at_mut(bk.len());
-        one.copy_from_slice(bk);
-        two.copy_from_slice(tag);
-        
-        // return the first 6 bytes of the hash of the bk_tag
-        let mut key: [u8; 6] = Default::default();
-        key.copy_from_slice(&hash(&bk_tag).as_slice()[0..6]);
-        key
+    pub fn tag_gen(tag_key: &[u8; 16], tk: &[u8; 16], message: &String) -> (Vec<u8>,Vec<u8>) {
+        let prf = prf_gen(&tag_key, message);
+        let sk = &tk[..].to_vec();
+        vrf_prove(&sk,&prf)
     }
 
-    pub fn store_tag_gen(uid: &u32, key: &[u8; 16], bk: &[u8; 16], message: &[u8]) -> [u8; 6] {
-        let tag = tag_gen(key, message);
-        proc_tag(bk, &tag)
-    }
-
-    pub fn tag_exists(uid: &u32, key: &[u8; 16], bk: &[u8; 16], message: &[u8]) -> bool{
-        let tag = store_tag_gen(uid, key, bk, message);
-        let mut conn = bloom_filter::get_bf_conn().ok().unwrap();
-        bloom_filter::exists(&tag)
+    pub fn tag_exists(key: &[u8; 16], tk: &[u8; 16], message: &String) -> bool{
+        let (tag, _) = tag_gen( key, tk, message);
+        // convert tag to string
+        bloom_filter::exists(&encode(&tag[..]))
     }
 
     pub fn m_tag_exists(tags: &Vec<[u8; 6]>) -> Vec<bool> {
@@ -133,6 +127,29 @@ pub mod algos{
         bloom_filter::mexists(&mut tag_str)
     }
 
+    // initialization: 900us; pkgen: 20; prove: 480; verify: 
+    pub fn vrf_pkgen(tk: &[u8; 16]) -> (Vec<u8>,Vec<u8>) {
+        let mut vrf = ECVRF::from_suite(CipherSuite::P256_SHA256_TAI).unwrap();
+        // convert tk to a hex string
+        let secret_key = &tk[..].to_vec();
+        let public_key = vrf.derive_public_key(&secret_key).unwrap();
+        return (secret_key.to_vec(),public_key)
+    }
+
+    pub fn vrf_prove(sk: &Vec<u8>, msg: &[u8]) -> (Vec<u8>,Vec<u8>) {
+        let mut vrf = ECVRF::from_suite(CipherSuite::P256_SHA256_TAI).unwrap();
+        let proof = vrf.prove(&sk, &msg).unwrap();
+        let hash = vrf.proof_to_hash(&proof).unwrap();
+        return (hash, proof)
+    }
+
+    pub fn vrf_verify(pk: &Vec<u8>, alpha: &[u8], proof: &Vec<u8>, result: &Vec<u8>) -> bool {
+        let mut vrf = ECVRF::from_suite(CipherSuite::P256_SHA256_TAI).unwrap();
+        let beta: Vec<u8> = vrf.verify(&pk, &proof, &alpha).unwrap();
+        // check whether beta == result
+        return beta == *result
+    }
+
 }
 
 #[cfg(test)]
@@ -141,6 +158,7 @@ mod tests {
   
     use crate::tool::utils::{encipher, decipher, crprf};
     use crate::tool::algos;
+    use base64::encode;
     use test::Bencher;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -164,25 +182,41 @@ mod tests {
     #[test]
     fn next_prev_key() {
         let key = rand::random::<[u8; 16]>();
-        let bk = rand::random::<[u8; 16]>();
-let first = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
-        let new_key = algos::next_key(&key, &bk);
-let second = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
-println!("Runtime {:?}", second - first);
-        let old_key = algos::prev_key(&new_key, &bk);
+        let tk = rand::random::<[u8; 16]>();
+        let new_key = algos::next_key(&key, &tk);
+        let old_key = algos::prev_key(&new_key, &tk);
         assert_eq!(key, old_key);
     }
 
     #[test]
     fn test_tag_gen() {
-        let uid = rand::random::<u32>();
         let message = rand::random::<[u8; 16]>();
         let key = rand::random::<[u8; 16]>();
-        let bk = rand::random::<[u8; 16]>();
-let first = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
-        algos::store_tag_gen(&uid, &key, &bk, &message);
-let second = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
-println!("Runtime {:?}", second - first);
+        let tk = rand::random::<[u8; 16]>();
+        algos::tag_gen( &key, &tk, &encode(message));
+    }
+
+    #[test]
+    fn test_vrf() {
+        let message = rand::random::<[u8; 16]>();
+        let tk = rand::random::<[u8; 16]>();
+        let (sk,pk) = algos::vrf_pkgen(&tk);
+        let (hash, pi) = algos::vrf_prove(&sk, &message);
+        assert!(algos::vrf_verify(&pk, &message, &pi, &hash));
+    }
+
+    #[bench]
+    fn bench_vrf_pkgen(b: &mut Bencher) {
+        let tk = rand::random::<[u8; 16]>();
+        b.iter(|| test::black_box(algos::vrf_pkgen(&tk)));
+    }
+
+    #[bench]
+    fn bench_vrf_prove(b: &mut Bencher) {
+        let message = rand::random::<[u8; 16]>();
+        let tk = rand::random::<[u8; 16]>();
+        let (sk,_) = algos::vrf_pkgen(&tk);
+        b.iter(|| test::black_box(algos::vrf_prove(&sk, &message)));
     }
 
     #[bench]
@@ -196,26 +230,25 @@ println!("Runtime {:?}", second - first);
     #[bench]
     fn bench_next_key(b: &mut Bencher) {
         let key = rand::random::<[u8; 16]>();
-        let bk = rand::random::<[u8; 16]>();
+        let tk = rand::random::<[u8; 16]>();
 
-        b.iter(|| test::black_box(algos::next_key(&key, &bk)));
+        b.iter(|| test::black_box(algos::next_key(&key, &tk)));
     }
 
     #[bench]
     fn bench_tag_gen(b: &mut Bencher) {
-        let uid = rand::random::<u32>();
         let message = rand::random::<[u8; 16]>();
         let key = rand::random::<[u8; 16]>();
-        let bk = rand::random::<[u8; 16]>();
+        let tk = rand::random::<[u8; 16]>();
 
-        b.iter(|| test::black_box(algos::store_tag_gen(&uid, &key, &bk, &message)));
+        b.iter(|| test::black_box(algos::tag_gen( &key, &tk, &encode(message))));
     }
 
     #[bench]
     fn bench_hash(b: &mut Bencher) {
         let message = rand::random::<[u8; 16]>();
 
-        b.iter(|| test::black_box(utils::hash_shake(&message)));
+        b.iter(|| test::black_box(utils::hash_shake(&encode(message))));
     }
 
 }

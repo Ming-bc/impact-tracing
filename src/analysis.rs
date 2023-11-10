@@ -64,7 +64,7 @@ mod traceability {
         thd_fpr_list
     }
 
-    pub fn calc_thd_fpr(hmap: &HashMap<usize,(usize,f64)>, thd_list: &Vec<f64>) -> Vec::<(usize, usize, f64)> {
+    pub fn traceability(hmap: &HashMap<usize,(usize,f64)>, thd_list: &Vec<f64>) -> Vec::<(usize, usize, f64)> {
         let mut fpr_list = Vec::<(usize, usize, f64)>::new();
 
         thd_list.iter().for_each(|thd| {
@@ -87,7 +87,7 @@ mod traceability {
         fpr_list
     }
 
-    pub fn calc_inf_dist(hmap: &HashMap<usize,(usize,f64)>) -> Vec::<(usize,usize)> {
+    pub fn inf_dist(hmap: &HashMap<usize,(usize,f64)>) -> Vec::<(usize,usize)> {
         let max_inf = find_max_inf_level(hmap);
         let mut inf_list = Vec::<(usize,usize)>::new();
 
@@ -102,9 +102,9 @@ mod traceability {
         inf_list
     }
 
-    pub fn calc_inf_fpr(hmap: &HashMap<usize,(usize,f64)>, thd_list: &Vec<f64>) -> Vec::<Vec<f64>> {
+    pub fn correctness(hmap: &HashMap<usize,(usize,f64)>, thd_list: &Vec<f64>) -> Vec::<Vec<f64>> {
         let max_inf = find_max_inf_level(hmap);
-        let real_inf_list: Vec<usize> = calc_inf_dist(hmap).iter().map(|(_,x)| *x).collect();
+        let real_inf_list: Vec<usize> = inf_dist(hmap).iter().map(|(_,x)| *x).collect();
         let mut thd_fill_rate_list = Vec::<Vec<f64>>::new();
         
         thd_list.iter().for_each(|thd| {
@@ -130,7 +130,7 @@ mod traceability {
         thd_fill_rate_list
     }
 
-    pub fn calc_fuz_fpr(hmap: &HashMap<usize,(usize,f64)>, thd_list: &Vec<f64>) -> Vec::<(usize, usize, f64)> {
+    pub fn privacy(hmap: &HashMap<usize,(usize,f64)>, thd_list: &Vec<f64>) -> Vec::<(usize, usize, f64)> {
         let mut fuz_fpr_list = Vec::<(usize, usize, f64)>::new();
 
         for i in 0..(thd_list.len()-1) {
@@ -174,47 +174,19 @@ mod traceability {
 }
 
 mod tests {
-    use crate::analysis::traceability::calc_inf_fpr;
-
-    use super::{traceability::{find_thd_fpr, import_csv, calc_thd_fpr, calc_inf_dist, gen_thd_list, calc_fuz_fpr}, utils::write_val_vec_to_file};
+    use super::{traceability::{correctness, find_thd_fpr, import_csv, traceability, inf_dist, gen_thd_list, privacy}, utils::write_val_vec_to_file};
 
     extern crate test;
-
-    #[test]
-    fn test_inf_dist(){
-        let list = import_csv(&"../Traceability-Evaluation/inputs/fuz_val_and_inf.csv".to_string());
-        write_val_vec_to_file(&calc_inf_dist(&list), &"./output/inf_dist/k_shell.txt".to_string());
-    }
-
-    #[test]
-    fn test_thd_fpr(){
-        let thd_list = gen_thd_list();
-        let val_list = import_csv(&"../Traceability-Evaluation/inputs/fuz_val_and_inf.csv".to_string());
-        write_val_vec_to_file(&calc_thd_fpr(&val_list, &thd_list), &"./output/thd_fpr_fix_step/thd_fpr.txt".to_string());
-    }
-
-    #[test]
-    fn test_inf_fpr(){
-        let thd_list = gen_thd_list();
-        let val_list = import_csv(&"../Traceability-Evaluation/inputs/fuz_val_and_inf.csv".to_string());
-        write_val_vec_to_file(&calc_inf_fpr(&val_list, &thd_list), &"./output/inf_fpr_dist/inf_fpr.txt".to_string());
-    }
-
-    #[test]
-    fn test_fuz_fpr(){
-        let range_list = vec![0.0, 80.0, 90.0, 95.0, 99.0, 99.5, 99.9, 99.99, 100.0];
-        let val_list = import_csv(&"../Traceability-Evaluation/inputs/fuz_val_and_inf.csv".to_string());
-        write_val_vec_to_file(&calc_fuz_fpr(&val_list, &range_list), &"./output/fuz_fpr/fuz_fpr.txt".to_string());
-    }
 
     #[test]
     fn gen_graph_csv() {
         let thd_list = gen_thd_list();
         let range_list = vec![0.0, 80.0, 90.0, 95.0, 99.0, 99.5, 99.9, 99.99, 100.0];
         let val_list = import_csv(&"../Traceability-Evaluation/inputs/fuz_val_and_inf.csv".to_string());
-        write_val_vec_to_file(&calc_inf_dist(&val_list), &"./output/inf_dist/k_shell.txt".to_string());
-        write_val_vec_to_file(&calc_thd_fpr(&val_list, &thd_list), &"./output/thd_fpr_fix_step/thd_fpr.txt".to_string());
-        write_val_vec_to_file(&calc_inf_fpr(&val_list, &thd_list), &"./output/inf_fpr_dist/inf_fpr.txt".to_string());
-        write_val_vec_to_file(&calc_fuz_fpr(&val_list, &range_list), &"./output/fuz_fpr/fuz_fpr.txt".to_string());
+
+        write_val_vec_to_file(&inf_dist(&val_list), &"./output/inf_dist/k_shell.txt".to_string());
+        write_val_vec_to_file(&traceability(&val_list, &thd_list), &"./output/thd_fpr_fix_step/thd_fpr.txt".to_string());
+        write_val_vec_to_file(&correctness(&val_list, &thd_list), &"./output/inf_detect/inf_detect.txt".to_string());
+        write_val_vec_to_file(&privacy(&val_list, &range_list), &"./output/fuz_fpr/fuz_fpr.txt".to_string());
     }
 }
