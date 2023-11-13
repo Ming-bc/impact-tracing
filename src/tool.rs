@@ -24,6 +24,14 @@ pub mod utils{
         y
     }
 
+    pub fn hash_shake_6(x: &String) -> [u8; 6] {
+        let mut y: [u8; 6] = Default::default();
+        let mut shake = Shake128::default();
+        shake.update(&decode(x).unwrap());
+        shake.finalize_xof().read(&mut y);
+        y
+    }
+
     // fn prf(k: &[u8; 16], x: &[u8]) -> [u8; 16] {
     //     let mut y: [u8; 16] = Default::default();
     //     y.copy_from_slice(&Sha3_256::digest(&[k, x].concat()).as_slice()[0..16]);

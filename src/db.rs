@@ -58,95 +58,12 @@ pub mod db_tag {
     }
 }
 
-pub mod bloom_filter {
-    extern crate redis;
-    extern crate base64;
-    extern crate lazy_static;
-
-    // fpr: 0.000000005, items: 1000,000
-    use redis::Connection;
-    const BF_IP: &str = "redis://localhost:6379/";
-    const BF_NAME: &str = "reserve";
-
-    lazy_static::lazy_static! {
-        pub static ref BLOOM: redis::Client = create_bloom_filter_client();
-    }
-
-    pub fn create_bloom_filter_client() -> redis::Client {
-        redis::Client::open(BF_IP).unwrap()
-    }
-
-    pub fn get_bf_conn() -> redis::RedisResult<Connection> {
-        Ok(BLOOM.get_connection()?)
-    }
-
-    pub fn add(tags: &Vec<String>) -> redis::RedisResult<()> {
-        let mut conn = get_bf_conn().unwrap();
-        let mut pipe = redis::Pipeline::new();
-
-        for t in tags {
-            let command = redis::cmd("bf.add").arg(BF_NAME).arg(t).to_owned();
-            pipe.add_command(command);
-        }
-        let _ : () = pipe.query(&mut conn)?;
-        Ok(())
-    }
-    
-    pub fn exists(tag: &String) -> bool {
-        let mut conn = get_bf_conn().unwrap();
-        redis::cmd("bf.exists").arg(BF_NAME).arg(tag).query(&mut conn).unwrap()
-    }
-
-    pub fn mexists(tags: &mut Vec<String>) -> Vec<bool> {
-        let mut conn = get_bf_conn().unwrap();
-        if tags.len() == 0 {
-            panic!("keys.len() == 0");
-        }
-        let result: Vec<bool> = redis::cmd("bf.mexists").arg(BF_NAME).arg(tags.to_owned()).query(&mut conn).unwrap();
-        result
-    }
-
-    pub fn mexists_pack(pack_keys: &Vec<Vec<String>>) -> Vec<Vec<bool>> {
-        let mut pack_result: Vec<Vec<bool>> = Vec::new();
-        let mut pack_keys_length: Vec<usize> = Vec::new();
-        let mut query_keys: Vec<String> = Vec::new();
-
-        for keys in pack_keys {
-            pack_keys_length.push(keys.len());
-            for k in keys {
-                query_keys.push(k.to_string());
-            }
-        }
-
-        let query_result: Vec<bool> = mexists(&mut query_keys);
-
-        let mut count_bool: usize = 0;
-        for i in 0..pack_keys_length.len(){
-            let mut result: Vec<bool> = Vec::new();
-            for j in 0..*pack_keys_length.get(i).unwrap() {
-                result.push(*query_result.get(count_bool + j).unwrap());
-            }
-            count_bool += *pack_keys_length.get(i).unwrap();
-            pack_result.push(result);
-        }
-
-        pack_result
-    }
-
-    pub fn clear() {
-        let mut db_conn = get_bf_conn().unwrap();
-        let _: () = redis::cmd("FLUSHDB").query(&mut db_conn).unwrap();
-    }
-}
-
 pub mod db_ik {
     extern crate redis;
     extern crate base64;
     extern crate lazy_static;
 
     use std::collections::HashMap;
-
-    use base64::encode;
     use redis::Connection;
     use lazy_static::lazy_static;
     use crate::message::messaging::IdKey;
@@ -281,25 +198,13 @@ pub mod tests {
     // extern crate test;
     use rand::random;
     use test::Bencher;
-    use redis::ConnectionLike;
-    use crate::db::{bloom_filter, db_nbr, db_ik};
+    use crate::db::{db_tag, db_nbr, db_ik};
     use crate::message::messaging::{Edge, IdKey};
-
-    use super::bloom_filter::clear;
-    use super::db_tag;
 
     // fn init_logger() {
     //     //env_logger::init();
     //     let _ = env_logger::builder().is_test(true).try_init();
     // }
-
-    // utils test
-    #[test]
-    fn bf_is_open() {
-        let con = bloom_filter::get_bf_conn().ok().unwrap();
-        // 测试是否成功连接Reids
-        assert!(con.is_open());
-    }
 
     #[test]
     fn redis_is_open() {
@@ -311,9 +216,9 @@ pub mod tests {
         let bytes = random::<[u8; 32]>();
         let bytes_2 = random::<[u8; 32]>();
         
-        assert!(bloom_filter::add(&vec![encode(bytes)]).is_ok());
-        assert!(bloom_filter::exists(&encode(bytes)));
-        assert_eq!(bloom_filter::exists(&encode(bytes_2)), false);
+        assert!(db_tag::add(&vec![encode(bytes)]).is_ok());
+        assert!(db_tag::exists(&encode(bytes)));
+        assert_eq!(db_tag::exists(&encode(bytes_2)), false);
     }
 
     #[test]
@@ -322,8 +227,8 @@ pub mod tests {
         for _i in 0..5 {
             values.push(encode(rand::random::<[u8; 32]>()));
         }
-        assert!(bloom_filter::add(&values).is_ok());
-        bloom_filter::mexists(&mut values);
+        assert!(db_tag::add(&values).is_ok());
+        db_tag::mexists(&mut values);
     }
 
     #[test]
@@ -385,12 +290,15 @@ pub mod tests {
         db_nbr::clear();
     }
 
-    #[bench]
-    fn bench_bloom_filter_exist(b: &mut Bencher) {
-        let bytes = random::<[u8; 32]>();
+    #[test]
+    fn bench_db_tag_exist() {
+        let bytes = random::<[u8; 6]>();
         let data = vec![encode(bytes)];
-        assert!(bloom_filter::add(&data).is_ok());
-        b.iter(|| bloom_filter::exists(&encode(bytes)));
+        assert!(db_tag::add(&data).is_ok());
+        let start = std::time::Instant::now();
+        db_tag::exists(&encode(bytes));
+        let end = std::time::Instant::now();
+        println!("db_tag exist runtime: {:?}", end - start);
     }
 
     #[test]
@@ -407,10 +315,10 @@ pub mod tests {
 
     #[test]
     fn bench_bloom_filter_add() {
-        let bytes = random::<[u8; 32]>();
+        let bytes = random::<[u8; 6]>();
         let data = vec![encode(bytes)];
         let start = std::time::Instant::now();
-        let _ = bloom_filter::add(&data).is_ok();
+        let _ = db_tag::add(&data).is_ok();
         let end = std::time::Instant::now();
         println!("Query runtime: {:?}", end - start);
     }
@@ -421,11 +329,11 @@ pub mod tests {
         for _i in 0..1 {
             let bytes: [u8; 32] = random::<[u8; 32]>();
             let tag: String = encode(&bytes[..]).clone();
-            assert!(bloom_filter::add(&vec![encode(bytes)]).is_ok());
+            assert!(db_tag::add(&vec![encode(bytes)]).is_ok());
             tags.push(tag);
         }
 
-        b.iter(|| bloom_filter::mexists(&mut tags));
+        b.iter(|| db_tag::mexists(&mut tags));
     }
 
 

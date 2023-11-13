@@ -102,7 +102,7 @@ pub mod traceback {
                 let tk = algos::tk_gen(&map_id_ik.get(&nbr_id).unwrap(), &md.uid);
                 let prev_key = algos::prev_key(&md.key, &tk);
                 source = TraceData::new(*nbr_id, prev_key);
-                // TODO: this break might be a problem when the first user is the source, so we ignore it in here
+                // TODO: this break can cause bug when the first user is the source.
                 break;
             }
         }
@@ -325,7 +325,7 @@ pub mod tests {
     #[test]
     fn trace_tree () {
         let branch: u32 = 3;
-        let depth: u32 = 6;
+        let depth: u32 = 8;
         let tree_size = calc_tree_size(&depth, &branch);
         let vec_user = (0..tree_size + 1).collect::<Vec<u32>>();
         let map_id_ik = register_users(&vec_user);
