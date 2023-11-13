@@ -5,23 +5,23 @@ pub mod messaging {
 
     use crate::tool::algos::*;
     // use crate::tool:: utils::*;
-    use crate::db::{bloom_filter, db_nbr, db_ik};
+    use crate::db::{db_tag, db_nbr, db_ik};
     use crate::tool::utils::hash;
     use base64::{decode, encode};
     use serde::{Serialize, Deserialize};
 
-    #[derive(Debug)]
+    #[derive(Serialize, Deserialize, Debug, Clone)]
     pub struct Edge {
-        pub sender: u32,
-        pub receiver: u32,
+        pub sid: u32,
+        pub rid: u32,
     }
 
     impl Edge {
         pub fn new(sid: &u32, rid: &u32) -> Edge {
-            Edge { sender: *sid, receiver: *rid }
+            Edge { sid: *sid, rid: *rid }
         }
         pub fn show(&self) {
-            print!("U{} - U{}, ", self.sender, self.receiver);
+            print!("U{} - U{}, ", self.sid, self.rid);
         }
     }
 
@@ -37,30 +37,30 @@ pub mod messaging {
             IdKey { id, key }
         }
         pub fn id_as_key_gen (id: u32) -> IdKey {
-            let key = hash(&id.to_string());
+            let key = hash(&(id).to_string());
             IdKey { id, key }
         }
     }
 
     #[derive(Serialize,Deserialize,Debug)]
     pub struct MsgPacket {
-        pub key: [u8; 16],
+        pub tag_key: [u8; 16],
         pub epheral_key: [u8; 16],
         pub tag: [u8; 32],
-        pub proof: Vec<u8>,
-        pub public_key: Vec<u8>,
+        pub vrf_pi: Vec<u8>,
+        pub vrf_pk: Vec<u8>,
         pub payload: String, // base64 encode string
     }
 
     impl MsgPacket {
         pub fn new(tag_key: &[u8; 16], message: &String, pi: &Vec<u8>, hash: &[u8;32]) -> Self {
             MsgPacket {
-                key: *tag_key, // 128 bits aes output
+                tag_key: *tag_key, // 128 bits aes output
                 tag: *hash, // 256 bits hash output
-                proof: pi.to_vec(), // 641 bits (64 bytes) vrf proof
+                vrf_pi: pi.to_vec(), // 641 bits (64 bytes) vrf proof
                 epheral_key: rand::random::<[u8; 16]>(), // 128 bits aes key
                 payload: message.clone(), 
-                public_key: Vec::new(), // 33 bytes public key
+                vrf_pk: Vec::new(), // 33 bytes public key
             }
         }
     }
@@ -69,22 +69,6 @@ pub mod messaging {
     pub struct MsgReport {
         pub key: [u8; 16],
         pub payload: String,
-    }
-
-    #[derive(Serialize, Deserialize, Debug, Clone)]
-    pub struct Session {
-        pub sid: u32,
-        pub rid: u32,
-    }
-
-    impl Session {
-        pub fn new (sender: &u32, receiver: &u32) -> Self {
-            Session { sid: sender.clone(), rid: receiver.clone() }
-        }
-        
-        pub fn show (&self) {
-            println!("Sender {}, Receiver {}", self.sid, self.rid);
-        }
     }
 
     pub fn send_packet(message: &String, prev_key: &[u8; 16], tk: &[u8; 16]) -> MsgPacket {
@@ -102,33 +86,33 @@ pub mod messaging {
     }
 
     // proc_msg:
-    pub fn plt_proc_packet(sess: &Session, packet: &mut MsgPacket) {
+    pub fn plt_proc_packet(sess: &Edge, packet: &mut MsgPacket) {
         let map_id_key = db_ik::query(&vec![sess.sid]);
         let ik = map_id_key.get(&sess.sid).unwrap();
         let tk = tk_gen(ik, &sess.rid);
         let (_,pk) = vrf_pkgen(&tk);
-        packet.public_key = pk;
+        packet.vrf_pk = pk;
     }
 
     pub fn store_tag(packet: &mut MsgPacket) {
-        let _ = bloom_filter::add(&vec![encode(packet.tag)]);
+        let _ = db_tag::add(&vec![encode(packet.tag)]);
     }
 
     // vrf_msg:
     pub fn receive_packet(packet: &MsgPacket) -> bool {
         // 1. Decrypts E2EE
         // 2. Compute prf = F_k(m)
-        let prf = prf_gen(&packet.key, &packet.payload);
+        let prf = prf_gen(&packet.tag_key, &packet.payload);
         // 3. Verify tag
-        return vrf_verify(&packet.public_key, &prf.to_vec(), &packet.proof, &packet.tag.to_vec());
+        return vrf_verify(&packet.vrf_pk, &prf.to_vec(), &packet.vrf_pi, &packet.tag.to_vec());
     }
 
     // report_msg:
-    pub fn submit_report(tag_key: &[u8;16], message: &String, sess: &Session) -> (MsgReport, Session) {
+    pub fn submit_report(tag_key: &[u8;16], message: &String, sess: &Edge) -> (MsgReport, Edge) {
         (MsgReport { key: *tag_key, payload: message.clone()}, sess.clone())
     }
 
-    pub fn verify_report(sess: Session, report: MsgReport) -> bool {
+    pub fn verify_report(sess: &Edge, report: &MsgReport) -> bool {
         let map_id_key = db_ik::query(&vec![sess.sid]);
         let ik = map_id_key.get(&sess.sid).unwrap();
         let tk = tk_gen(ik, &sess.rid);
@@ -151,7 +135,7 @@ mod tests {
     use test::Bencher;
     use vrf::VRF;
     use vrf::openssl::{ECVRF, CipherSuite};
-    use crate::db::{bloom_filter, db_nbr, db_ik};
+    use crate::db::{db_tag, db_nbr, db_ik};
     use crate::message::messaging::*;
     use crate::tool::algos::*;
     use aes_gcm::{
@@ -165,7 +149,7 @@ mod tests {
     // }
 
     fn proc_msg(tk: &[u8;16], packet: &mut MsgPacket) {
-        (_,packet.public_key) = vrf_pkgen(tk);
+        (_,packet.vrf_pk) = vrf_pkgen(tk);
     }
 
     #[test]
@@ -193,7 +177,7 @@ mod tests {
         let tk = rand::random::<[u8; 16]>();
         let mut packet = send_packet(&encode(message),&[0;16], &tk);
         let (_,pk) = vrf_pkgen(&tk);
-        packet.public_key = pk;
+        packet.vrf_pk = pk;
 
         b.iter(|| receive_packet(&packet));
     }
@@ -207,15 +191,15 @@ mod tests {
         let ik: [u8; 16] = rand::random::<[u8; 16]>();
         let tk = tk_gen(&ik, &rid);
         let tag_key = new_key_gen(&tk);
-        let sess = Session::new( &sid, &rid);
+        let sess = Edge::new( &sid, &rid);
         let (tag,_) = tag_gen(&tag_key, &tk, &encode(message));
 
         let _ = db_ik::add(&vec![IdKey {id: sess.sid, key: ik}]);
         let _ = db_nbr::add(&vec![sess.clone()]);
-        let _ = bloom_filter::add(&vec![encode(tag)]);
+        let _ = db_tag::add(&vec![encode(tag)]);
 
         let (report, sess_sub) = submit_report(&tag_key, &encode(message), &sess);
-        assert!(verify_report(sess_sub, report), "Verify failed");
+        assert!(verify_report(&sess_sub, &report), "Verify failed");
     }
 
 // Test messaging runtime

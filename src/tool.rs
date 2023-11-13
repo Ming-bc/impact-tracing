@@ -72,7 +72,7 @@ pub mod algos{
 
     use base64::encode;
     use crate::tool::utils::{hash, crprf, encipher, decipher};
-    use crate::db::bloom_filter;
+    use crate::db::db_tag;
     use vrf::openssl::{CipherSuite, ECVRF};
     use vrf::VRF;
 
@@ -115,7 +115,7 @@ pub mod algos{
     pub fn tag_exists(key: &[u8; 16], tk: &[u8; 16], message: &String) -> bool{
         let (tag, _) = tag_gen( key, tk, message);
         // convert tag to string
-        bloom_filter::exists(&encode(&tag[..]))
+        db_tag::exists(&encode(&tag[..]))
     }
 
     pub fn m_tag_exists(tags: &Vec<[u8; 6]>) -> Vec<bool> {
@@ -124,7 +124,7 @@ pub mod algos{
             let bytes_to_str = encode(&bytes[..]);
             tag_str.push(bytes_to_str);
         }
-        bloom_filter::mexists(&mut tag_str)
+        db_tag::mexists(&mut tag_str)
     }
 
     // initialization: 900us; pkgen: 20; prove: 480; verify: 
