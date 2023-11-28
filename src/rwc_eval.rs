@@ -25,6 +25,7 @@ pub mod rwc_eval {
             let (fwd_degree, fuzz_degree) =  (degree_analysis(&fwd_graph, &sys_graph), degree_analysis(&fuzz_graph, &sys_graph));
 
             // 3. mock sends for fuzz_edges
+            let trace_st_node: u32 = fuzzy_traceback::any_leaf(&fwd_graph) as u32;
             let message = "message".to_string() + &i.to_string();
             let root: u32 = 719;
 
@@ -38,11 +39,12 @@ pub mod rwc_eval {
             let trace_st_key = rcv_keys.get(&trace_st_node).unwrap();
             
             let t_start = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
-            let traced_edges = traceback::tracing(&MsgReport {key: *trace_st_key, payload: message}, &trace_st_node);
+            let _ = traceback::tracing(&MsgReport {key: *trace_st_key, payload: message}, &trace_st_node);
             // convert edges to Vec<(usize,usize)>
             let t_end = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
-// print!("\nReal {}, Trace {}", fuzz_edges.len(), traced_edges.len());
-
+// assert_eq!(trace_edges.len()-1, fuzz_edges.len());
+// println!("Real {}, Trace {}", fuzz_edges.len(), trace_edges.len());
+            
             // 5. record as fwd_nodes, fwd_edges, fuzz_nodes, fuzz_edges, runtime
             record.push(vec![fwd_graph.node_count() as f64, fwd_edges.len() as f64, fwd_degree as f64,  fuzz_graph.node_count() as f64, fuzz_edges.len() as f64, fuzz_degree as f64, (t_end.as_millis() - t_start.as_millis()) as f64]);
         }
