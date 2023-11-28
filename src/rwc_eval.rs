@@ -6,7 +6,7 @@ pub mod rwc_eval {
     use base64::encode;
     use petgraph::{prelude::UnGraph, visit::EdgeRef};
 
-    use crate::{simulation::{sir, utils::{vec_to_graph, dedup_vec_edges}, fuzzy_traceback::{fuzzy_trace_ours, any_leaf, self, degree_analysis}}, message::messaging::{MsgReport, MsgPacket, IdKey, send_packet, Edge}, db::{db_tag, db_ik, db_nbr}, tool::{algos::tk_gen, utils::hash}, trace};
+    use crate::{simulation::{sir, utils::{vec_to_graph, dedup_vec_edges}, fuzzy_traceback::{fuzzy_trace_ours, any_leaf, self, degree_analysis}}, message::messaging::{MsgReport, MsgPacket, IdKey, send_packet, Edge}, db::{db_tag, db_ik, db_nbr}, tool::{algos::tk_gen, utils::hash}};
     use crate::trace::traceback;
 
     pub fn eval_fuzz_trace_runtime(trace_fpr: &f32, s2i: &f32, i2r: &f32, loop_index: &usize, sys_graph: &UnGraph<usize,()>,  fwd_out_dir: &String) -> Vec<f64> {
@@ -25,8 +25,7 @@ pub mod rwc_eval {
             let (fwd_degree, fuzz_degree) =  (degree_analysis(&fwd_graph, &sys_graph), degree_analysis(&fuzz_graph, &sys_graph));
 
             // 3. mock sends for fuzz_edges
-            let trace_st_node: u32 = fuzzy_traceback::any_leaf(&fwd_graph) as u32;
-            let message = "message".to_string();
+            let message = "message".to_string() + &i.to_string();
             let root: u32 = 719;
 
             let (_, first_packet) = frist_pkg(&message, &root);
@@ -35,14 +34,15 @@ pub mod rwc_eval {
             recursive_mock_send(&root, &first_packet.tag_key, &message, &mut expl_user, &fuzz_edges, &map_id_ik, &mut rcv_keys);
 
             // 4. traceback
+            let trace_st_node: u32 = fuzzy_traceback::any_leaf(&fwd_graph) as u32;
             let trace_st_key = rcv_keys.get(&trace_st_node).unwrap();
+            
             let t_start = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
-            let trace_edges = traceback::tracing(&MsgReport {key: *trace_st_key, payload: message}, &trace_st_node);
+            let traced_edges = traceback::tracing(&MsgReport {key: *trace_st_key, payload: message}, &trace_st_node);
             // convert edges to Vec<(usize,usize)>
             let t_end = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
-// assert_eq!(trace_edges.len()-1, fuzz_edges.len());
-println!("Real {}, Trace {}", fuzz_edges.len(), trace_edges.len());
-            
+// print!("\nReal {}, Trace {}", fuzz_edges.len(), traced_edges.len());
+
             // 5. record as fwd_nodes, fwd_edges, fuzz_nodes, fuzz_edges, runtime
             record.push(vec![fwd_graph.node_count() as f64, fwd_edges.len() as f64, fwd_degree as f64,  fuzz_graph.node_count() as f64, fuzz_edges.len() as f64, fuzz_degree as f64, (t_end.as_millis() - t_start.as_millis()) as f64]);
         }
@@ -180,11 +180,12 @@ mod tests {
         let s2i_list = vec![0.03, 0.04, 0.05, 0.06, 0.07, 0.08];
         let i2r_list = vec![0.7];
         let trace_fpr: f32 = 0.01;
-        let loop_index = 1;
+        let loop_index = 10;
 
         let mut count = 0;
         for s2i in s2i_list {
             for i2r in &i2r_list {
+                db_clear();
                 let output_dir = format!("./output/rwc/{}", count);
                 let record = eval_fuzz_trace_runtime(&trace_fpr, &s2i, i2r, &loop_index, &sys_graph, &output_dir);
                 println!("\nS-I-R: {}-{}; Fwd-Fuzz: ({}:{}:{})-({}:{}:{}); Runtime: {}", s2i, i2r, record[0], record[1], record[2], record[3], record[4], record[5], record[6]);
@@ -193,5 +194,4 @@ mod tests {
             }
         }
     }
-
 }

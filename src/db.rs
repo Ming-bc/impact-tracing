@@ -6,7 +6,7 @@ pub mod db_tag {
     extern crate lazy_static;
 
     use redis::Connection;
-    const SET_IP: &str = "redis://localhost:6402/";
+    const DB_TAG_IP: &str = "redis://localhost:6402/";
     const SET_NAME: &str = "tags";
 
     lazy_static::lazy_static! {
@@ -14,7 +14,7 @@ pub mod db_tag {
     }
 
     pub fn create_redis_set_client() -> redis::Client {
-        redis::Client::open(SET_IP).unwrap()
+        redis::Client::open(DB_TAG_IP).unwrap()
     }
 
     pub fn get_set_conn() -> redis::RedisResult<Connection> {
@@ -45,6 +45,9 @@ pub mod db_tag {
         let mut pipe = redis::pipe();
 
         for keys in pack_keys {
+            if keys.len() == 0 {
+                panic!("keys.len() == 0");
+            }
             let command = redis::cmd("SMISMEMBER").arg(SET_NAME).arg(keys.to_owned()).to_owned();
             pipe.add_command(command);
         }

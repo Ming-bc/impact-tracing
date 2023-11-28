@@ -127,6 +127,14 @@ pub mod utils {
         let _ = f.write_all(&output.as_bytes());
     }
 
+    pub fn derive_graph_id_wt_map (g: &Graph<usize, usize>) -> HashMap<usize, usize> {
+        let mut id_wt_map = HashMap::<usize, usize>::new();
+        g.node_references().for_each(|(node, wt)| {
+            id_wt_map.insert(node.index(), *wt);
+        });
+        id_wt_map
+    }
+
     pub fn graph_to_dot_for_draw(fwd_edge_list: &Vec<(usize,usize)>, fuzz_edge_list: &HashMap<(usize, usize), (usize, usize)>, sys_graph: &UnGraph<usize, ()>, dir: &String) {
         let mut wt_graph = Graph::<usize, usize>::new();
         sys_graph.node_indices().for_each(|node| {
@@ -257,9 +265,7 @@ pub mod fuzzy_traceback {
     use petgraph::prelude::UnGraph;
     use probability::{distribution::Binomial, prelude::Discrete};
 
-    use crate::simulation::sir;
-
-    use super::{utils::{rand_state, vec_to_graph, hmap_to_graph, import_graph}, sir::vec_edge_exists};
+    use super::{utils::{rand_state, vec_to_graph, hmap_to_graph}, sir::vec_edge_exists};
 
     #[derive(Debug, Clone, PartialEq)]
     pub struct TraceMd {
@@ -669,9 +675,9 @@ pub mod fuzzy_traceback {
 #[cfg(test)]
 mod tests {
     extern crate test;
-    use std::collections::HashMap;
+    use std::{collections::HashMap, fmt::write};
 
-    use crate::simulation::{sir, fuzzy_traceback::{fuzz_bfs, self, degree_analysis, fuzzy_trace_ours, calc_fuz_val}, utils::{import_graph, graph_to_dot, fuz_val_to_graph, write_val_to_file, hmap_to_graph, vec_to_graph, gen_raw_data_file, graph_to_dot_for_draw}};
+    use crate::simulation::{sir, fuzzy_traceback::{fuzz_bfs, self, degree_analysis, fuzzy_trace_ours, calc_fuz_val}, utils::{import_graph, graph_to_dot, fuz_val_to_graph, write_val_to_file, hmap_to_graph, vec_to_graph, gen_raw_data_file, graph_to_dot_for_draw, derive_graph_id_wt_map}};
 
     use super::utils::dedup_in_db_file;
   
@@ -718,7 +724,7 @@ mod tests {
     #[test]
     fn test_fuzz_ours() {
         let sys_graph = import_graph("./graphs/message.txt".to_string());
-        let trace_fpr: f32 = 0.01;
+        let trace_fpr: f32 = 0.04;
 
         loop {
             // 1.Generate a forward graph that start in node 719 by SIR algorithm
@@ -750,6 +756,11 @@ mod tests {
             });
             let (full_fuz_graph, _) = hmap_to_graph(&fwd_traced_edges);
             println!("Full fuzzy Graph: node {:?}, edge {:?}", full_fuz_graph.node_count(), full_fuz_graph.edge_count());
+
+            // write graph to file for k-shell comparison
+            graph_to_dot(&full_fuz_graph, "../Traceability-Evaluation/graphs/graph_fuzzy.dot".to_string());
+            let sys_to_fuzz_id_map = derive_graph_id_wt_map(&full_fuz_graph);
+            write_val_to_file(&sys_to_fuzz_id_map, "../Traceability-Evaluation/inputs/id_map_fuzz.txt".to_string());
 
             let fuzzy_graph = fuz_val_to_graph(&full_fuz_graph, &memb_val, &edge_fpr);
             graph_to_dot(&fuzzy_graph, "./output/graph_fuzzy.dot".to_string());

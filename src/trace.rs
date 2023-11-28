@@ -5,12 +5,12 @@ pub mod traceback {
 
     use std::collections::{HashSet, HashMap};
     use std::sync::{Arc, Mutex};
+    use std::time::Instant;
     use std::{thread, fmt};
     use crate::message::messaging::{MsgReport, Edge};
     use crate::tool::algos;
     use crate::db::{db_tag, db_nbr, db_ik};
-    use base64::{decode, encode};
-
+    use base64::encode;
     #[derive(Clone, Debug)]
     pub struct TraceData {
         pub uid: u32,
@@ -47,6 +47,7 @@ pub mod traceback {
 
     fn db_query_nbrs(vec_uid: &Vec<u32>) -> (Vec<Vec<u32>>, HashMap<u32,[u8;16]>){
         // query nbrs of users
+        // let map_uid_nbr = db_nbr::query(vec_uid);
         let map_uid_nbr = db_nbr::query(vec_uid);
         // query ik of users
         let values: Vec<Vec<u32>> = map_uid_nbr.clone().into_values().collect();
@@ -106,14 +107,16 @@ pub mod traceback {
                 break;
             }
         }
-
         source
     }
 
     pub fn par_forward_search(input_msg: &String, md: &Vec<TraceData>) -> Vec<Vec<TraceData>> {
         let mut result: Vec<Vec<TraceData>> = Vec::new();
         let users: Vec<u32> = md.into_iter().map(|data| data.uid).collect();
+// let q_nbr = Instant::now();
         let (vec_vec_nbrs, map_id_ik) = db_query_nbrs(&users);
+// print!("Query nbrs: {:?}, ", q_nbr.elapsed());
+// let q_compute_tag = Instant::now();
         let mut pack_tags_tbt: Vec<Vec<String>> = Vec::new();
         let mut pack_next_key_set: Vec<Vec<[u8; 16]>> = Vec::new();
         for i in 0..vec_vec_nbrs.len() {
@@ -125,15 +128,16 @@ pub mod traceback {
             let par_next_keys: Arc<Mutex<HashMap<usize, [u8;16]>>> = Arc::new(Mutex::new(HashMap::new()));
             let mut thread_list = Vec::new();
             for j in 0..vec_nbrs.len() {
-                let curr_nbr_id = vec_nbrs.get(j).unwrap();
-                let tags_hmap = par_tags.clone();
-                let next_key_hmap = par_next_keys.clone();
-                let tk = algos::tk_gen(&curr_uik, &curr_nbr_id);
-                let lock_key = Arc::clone(&key);
-                let lock_message = Arc::clone(&message);
+                let curr_nbr_id: &u32 = vec_nbrs.get(j).unwrap();
+                let tags_hmap: Arc<Mutex<HashMap<usize, String>>> = par_tags.clone();
+                let next_key_hmap: Arc<Mutex<HashMap<usize, [u8; 16]>>> = par_next_keys.clone();
+                let tk: [u8; 16] = algos::tk_gen(&curr_uik, &curr_nbr_id);
+                let lock_key: Arc<[u8; 16]> = Arc::clone(&key);
+                let lock_message: Arc<String> = Arc::clone(&message);
 
                 let handle = thread::spawn(move || {
                     let next_key = algos::next_key(&lock_key, &tk);
+                    // let (tag, _) = algos::optimize_tag_gen(&next_key, &tk, &lock_message, &mut lock_vrf);
                     let (tag, _) = algos::tag_gen(&next_key, &tk, &lock_message);
                     let mut next_keys = next_key_hmap.lock().unwrap();
                     next_keys.insert(j, next_key);
@@ -154,16 +158,18 @@ pub mod traceback {
             pack_tags_tbt.push(tags_tbt);
             pack_next_key_set.push(next_key_set);
         }
-
-        let query_bool: Vec<Vec<bool>> = db_tag::mexists_pack(&pack_tags_tbt);
-        for i in 0..query_bool.len() {
+// print!("Compute tags: {:?}, ", q_compute_tag.elapsed());
+// let q_tag = Instant::now();
+        let vec_resp: Vec<Vec<bool>> = db_tag::mexists_pack(&pack_tags_tbt);
+// println!("Query tags: {:?}.", q_tag.elapsed());
+        for i in 0..vec_resp.len() {
             let next_key_set = pack_next_key_set.get(i).unwrap();
-            let bf_result = query_bool.get(i).unwrap();
+            let response = vec_resp.get(i).unwrap();
             let vec_nbrs = vec_vec_nbrs.get(i).unwrap();
 
             let mut rcv_result: Vec<TraceData> = Vec::new();
-            for j in 0..bf_result.len() {
-                if *bf_result.get(j).unwrap() == true {
+            for j in 0..response.len() {
+                if *response.get(j).unwrap() == true {
                     let nbr_id = vec_nbrs.get(j).unwrap();
                     let next_key = next_key_set.get(j).unwrap();
                     rcv_result.push(TraceData {uid: *nbr_id, key: *next_key})
@@ -182,10 +188,9 @@ pub mod traceback {
         rcv_set.push(current_sender.clone());
 
         while (current_sender.uid != 0) | (rcv_set.is_empty() == false) {
-            // Search the previous node of the sender
+            // Search the acestor of the sender
             if current_sender.uid != 0 {
                 let prev_sender: TraceData;
-// println!("Backward search: {}", current_sender);
                 prev_sender = par_backward_search(&report.payload, &TraceData { uid: current_sender.uid, key: current_sender.key });
                 if prev_sender.uid != 0 {
                     path.push(Edge::new(&prev_sender.uid, &current_sender.uid));
@@ -193,14 +198,10 @@ pub mod traceback {
                 rcv_set.push(current_sender.clone());
                 current_sender = TraceData::from(prev_sender);
             }
+
             // Search the receivers of the message
             let rcv_len_at_begin = rcv_set.len();
             if rcv_set.is_empty() == false {
-
-// println!("\nForward search: ");
-// for u in &rcv_set {
-//     print!("{}, ", u.uid);
-// }
                 let mut outside_set: Vec<TraceData> = Vec::new();
                 let bf_results = par_forward_search(&&report.payload, &rcv_set);
                 for i in 0..bf_results.len() {

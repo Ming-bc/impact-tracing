@@ -165,10 +165,12 @@ mod tests {
     extern crate test;
   
     use crate::tool::utils::{encipher, decipher, crprf};
-    use crate::tool::algos;
+    use crate::tool::algos::{self, tag_gen, prf_gen};
     use base64::encode;
     use test::Bencher;
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use vrf::openssl::{CipherSuite, ECVRF};
+    use vrf::VRF;
+    use std::time::{SystemTime, UNIX_EPOCH, Instant};
 
     use super::utils;
 
