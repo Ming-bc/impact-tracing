@@ -1,11 +1,15 @@
 #![allow(dead_code)]
 pub mod utils{
     use aes::Aes128;
+    use aes_gcm::{
+        aead::{Aead, AeadCore, OsRng},
+        Aes256Gcm, Nonce, Key // Or `Aes128Gcm`
+    };
     use aes::cipher::{
         BlockEncrypt, BlockDecrypt, KeyInit,
         generic_array::GenericArray,
     };
-    use base64::decode;
+    use base64::{decode, encode};
     use sha3::{Digest, digest::{Update, ExtendableOutput, XofReader}, Sha3_256, Shake128};
     use tiny_keccak::{Kmac, Hasher};
 
@@ -13,6 +17,12 @@ pub mod utils{
     pub fn hash(x: &String) -> [u8; 16] {
         let mut y: [u8; 16] = Default::default();
         y.copy_from_slice(&Sha3_256::digest(x).as_slice()[0..16]);
+        y
+    }
+
+    pub fn hash_array_32(x: &[u8]) -> [u8; 32] {
+        let mut y: [u8; 32] = Default::default();
+        y.copy_from_slice(&Sha3_256::digest(x).as_slice()[0..32]);
         y
     }
 
@@ -71,7 +81,34 @@ pub mod utils{
         plaintext.copy_from_slice(&block.as_slice());
         plaintext
     }
-    
+
+    pub fn encryption(k: &[u8; 16], plaintext: &[u8; 32]) -> [u8; 48] {
+        let mut ct: [u8; 48] = [0;48];
+        // hash k to 32 bytes
+        let mut hash_k: [u8; 32] = Default::default();
+        hash_k.copy_from_slice(&Sha3_256::digest(k).as_slice()[0..32]);
+
+        let key = Key::<Aes256Gcm>::from_slice(&hash_k);
+        let nonce = Nonce::from_slice(b"unique nonce"); // 96-bits; unique per message
+        let cipher = Aes256Gcm::new(key);
+        let ciphertext = cipher.encrypt(nonce, plaintext.as_ref()).unwrap();
+        ct.copy_from_slice(&ciphertext);
+        ct
+    }
+
+    pub fn decryption(k: &[u8; 16], ciphertext: &[u8; 48]) -> [u8; 32] {
+        let mut p: [u8; 32] = Default::default();
+        // hash k to 32 bytes
+        let mut hash_k: [u8; 32] = Default::default();
+        hash_k.copy_from_slice(&Sha3_256::digest(k).as_slice()[0..32]);
+        
+        let key = Key::<Aes256Gcm>::from_slice(&hash_k);
+        let nonce = Nonce::from_slice(b"unique nonce"); // 96-bits; unique per message
+        let cipher = Aes256Gcm::new(key);
+        let plaintext = cipher.decrypt(nonce, ciphertext.as_ref()).unwrap();
+        p.copy_from_slice(&plaintext);
+        p
+    } 
 }
 
 pub mod algos{
@@ -83,6 +120,8 @@ pub mod algos{
     use crate::db::db_tag;
     use vrf::openssl::{CipherSuite, ECVRF};
     use vrf::VRF;
+
+    use super::utils::hash_array_32;
 
     pub fn tk_gen(sik: &[u8; 16], rid: &u32) -> [u8; 16] {
         // convert sik and rid to string 
@@ -114,14 +153,28 @@ pub mod algos{
         crprf(tag_key, &hash_msg)
     }
 
-    pub fn tag_gen(tag_key: &[u8; 16], tk: &[u8; 16], message: &String) -> (Vec<u8>,Vec<u8>) {
-        let prf = prf_gen(&tag_key, message);
-        let sk = &tk[..].to_vec();
-        vrf_prove(&sk,&prf)
+    pub fn hk_gen(tk: &[u8; 16]) -> [u8; 16] {
+        // hash the tk
+        hash(&encode(tk))
+    }
+
+    pub fn tag_proc(t: &[u8; 32], hk: &[u8; 16]) -> [u8; 32] {
+        // concat tag and hk
+        let mut proc_tag: [u8; 48] = [0; 48];
+        let (one, two) = proc_tag.split_at_mut(hk.len());
+        one.copy_from_slice(hk);
+        two.copy_from_slice(t);
+        hash_array_32(&proc_tag)
+    }
+
+    pub fn proc_tag_gen(tag_key: &[u8; 16], tk: &[u8; 16], message: &String) -> Vec<u8> {
+        let t = prf_gen(&tag_key, message);
+        let hk = hk_gen(&tk);
+        tag_proc(&t, &hk).to_vec()
     }
 
     pub fn tag_exists(key: &[u8; 16], tk: &[u8; 16], message: &String) -> bool{
-        let (tag, _) = tag_gen( key, tk, message);
+        let tag = proc_tag_gen( key, tk, message);
         // convert tag to string
         db_tag::exists(&encode(&tag[..]))
     }
@@ -135,29 +188,6 @@ pub mod algos{
         db_tag::mexists(&mut tag_str)
     }
 
-    // initialization: 900us; pkgen: 20; prove: 480; verify: 
-    pub fn vrf_pkgen(tk: &[u8; 16]) -> (Vec<u8>,Vec<u8>) {
-        let mut vrf = ECVRF::from_suite(CipherSuite::P256_SHA256_TAI).unwrap();
-        // convert tk to a hex string
-        let secret_key = &tk[..].to_vec();
-        let public_key = vrf.derive_public_key(&secret_key).unwrap();
-        return (secret_key.to_vec(),public_key)
-    }
-
-    pub fn vrf_prove(sk: &Vec<u8>, msg: &[u8]) -> (Vec<u8>,Vec<u8>) {
-        let mut vrf = ECVRF::from_suite(CipherSuite::P256_SHA256_TAI).unwrap();
-        let proof = vrf.prove(&sk, &msg).unwrap();
-        let hash = vrf.proof_to_hash(&proof).unwrap();
-        return (hash, proof)
-    }
-
-    pub fn vrf_verify(pk: &Vec<u8>, alpha: &[u8], proof: &Vec<u8>, result: &Vec<u8>) -> bool {
-        let mut vrf = ECVRF::from_suite(CipherSuite::P256_SHA256_TAI).unwrap();
-        let beta: Vec<u8> = vrf.verify(&pk, &proof, &alpha).unwrap();
-        // check whether beta == result
-        return beta == *result
-    }
-
 }
 
 #[cfg(test)]
@@ -165,14 +195,14 @@ mod tests {
     extern crate test;
   
     use crate::tool::utils::{encipher, decipher, crprf};
-    use crate::tool::algos::{self, tag_gen, prf_gen};
+    use crate::tool::algos::{self, proc_tag_gen, prf_gen};
     use base64::encode;
     use test::Bencher;
     use vrf::openssl::{CipherSuite, ECVRF};
     use vrf::VRF;
     use std::time::{SystemTime, UNIX_EPOCH, Instant};
 
-    use super::utils;
+    use super::utils::{self, encryption};
 
     // fn init_logger() {
     //     //env_logger::init();
@@ -203,30 +233,16 @@ mod tests {
         let message = rand::random::<[u8; 16]>();
         let key = rand::random::<[u8; 16]>();
         let tk = rand::random::<[u8; 16]>();
-        algos::tag_gen( &key, &tk, &encode(message));
+        algos::proc_tag_gen( &key, &tk, &encode(message));
     }
 
     #[test]
-    fn test_vrf() {
-        let message = rand::random::<[u8; 16]>();
-        let tk = rand::random::<[u8; 16]>();
-        let (sk,pk) = algos::vrf_pkgen(&tk);
-        let (hash, pi) = algos::vrf_prove(&sk, &message);
-        assert!(algos::vrf_verify(&pk, &message, &pi, &hash));
-    }
-
-    #[bench]
-    fn bench_vrf_pkgen(b: &mut Bencher) {
-        let tk = rand::random::<[u8; 16]>();
-        b.iter(|| test::black_box(algos::vrf_pkgen(&tk)));
-    }
-
-    #[bench]
-    fn bench_vrf_prove(b: &mut Bencher) {
-        let message = rand::random::<[u8; 16]>();
-        let tk = rand::random::<[u8; 16]>();
-        let (sk,_) = algos::vrf_pkgen(&tk);
-        b.iter(|| test::black_box(algos::vrf_prove(&sk, &message)));
+    fn test_encryption_decryption() {
+        let message = rand::random::<[u8; 32]>();
+        let key = rand::random::<[u8; 16]>();
+        let ciphertext = encryption(&key, &message);
+        let plaintext = utils::decryption(&key, &ciphertext);
+        assert!(plaintext == message);
     }
 
     #[bench]
@@ -246,12 +262,12 @@ mod tests {
     }
 
     #[bench]
-    fn bench_tag_gen(b: &mut Bencher) {
+    fn bench_proc_tag_gen(b: &mut Bencher) {
         let message = rand::random::<[u8; 16]>();
         let key = rand::random::<[u8; 16]>();
         let tk = rand::random::<[u8; 16]>();
 
-        b.iter(|| test::black_box(algos::tag_gen( &key, &tk, &encode(message))));
+        b.iter(|| test::black_box(algos::proc_tag_gen( &key, &tk, &encode(message))));
     }
 
     #[bench]

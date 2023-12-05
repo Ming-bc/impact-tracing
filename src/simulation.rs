@@ -724,7 +724,7 @@ mod tests {
     #[test]
     fn test_fuzz_ours() {
         let sys_graph = import_graph("./graphs/message.txt".to_string());
-        let trace_fpr: f32 = 0.04;
+        let trace_fpr: f32 = 0.005;
 
         loop {
             // 1.Generate a forward graph that start in node 719 by SIR algorithm

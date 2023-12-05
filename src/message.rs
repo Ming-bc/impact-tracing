@@ -3,11 +3,13 @@
 pub mod messaging {
     extern crate base64;
 
+    use std::default;
+
     use crate::tool::algos::*;
     // use crate::tool:: utils::*;
-    use crate::db::{db_tag, db_nbr, db_ik};
-    use crate::tool::utils::hash;
-    use base64::{decode, encode};
+    use crate::db::{db_tag, db_ik};
+    use crate::tool::utils::{hash, encryption, decryption};
+    use base64::encode;
     use serde::{Serialize, Deserialize};
 
     #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -46,21 +48,38 @@ pub mod messaging {
     pub struct MsgPacket {
         pub tag_key: [u8; 16],
         pub epheral_key: [u8; 16],
-        pub tag: [u8; 32],
-        pub vrf_pi: Vec<u8>,
-        pub vrf_pk: Vec<u8>,
+        pub prf: [u8; 32],
         pub payload: String, // base64 encode string
+        pub hk: [u8; 16],
+        pub p_tag: [u8; 32],
+        pub ct_1: [u8; 32],
+        pub ct_2: [u8; 16],
     }
 
     impl MsgPacket {
-        pub fn new(tag_key: &[u8; 16], message: &String, pi: &Vec<u8>, hash: &[u8;32]) -> Self {
+        pub fn new(tag_key: &[u8; 16], message: &String, prf: &[u8;32]) -> Self {
             MsgPacket {
                 tag_key: *tag_key, // 128 bits aes output
-                tag: *hash, // 256 bits hash output
-                vrf_pi: pi.to_vec(), // 641 bits (64 bytes) vrf proof
+                prf: *prf, // 256 bits hash output
                 epheral_key: rand::random::<[u8; 16]>(), // 128 bits aes key
                 payload: message.clone(), 
-                vrf_pk: Vec::new(), // 33 bytes public key
+                hk: Default::default(),
+                p_tag: Default::default(),
+                ct_1: Default::default(),
+                ct_2: Default::default(),
+            }
+        }
+        pub fn new_with_ek(tag_key: &[u8; 16], message: &String, prf: &[u8;32], ek: &[u8;16], ct: &[u8;48], p_tag: &[u8;32]) -> Self {
+            MsgPacket {
+                tag_key: *tag_key, // 128 bits aes output
+                prf: *prf, // 256 bits hash output
+                epheral_key: *ek, // 128 bits aes key
+                payload: message.clone(), 
+                hk: Default::default(),
+                p_tag: *p_tag,
+                // gen ct_1 and ct_2
+                ct_1: ct[..32].try_into().unwrap(),
+                ct_2: ct[32..].try_into().unwrap(),
             }
         }
     }
@@ -78,11 +97,12 @@ pub mod messaging {
         } else {
             next_key(prev_key, tk)
         };
-        let (hash,pi) = tag_gen(&tag_key, tk, message);
-        // convert hash to [u8; 32]
-        let mut hash_arr: [u8; 32] = Default::default();
-        hash_arr.copy_from_slice(&hash[..]);
-        MsgPacket::new(&tag_key, message, &pi, &hash_arr)
+        let t: [u8; 32] = prf_gen(&tag_key, message);
+        let ek: [u8; 16] = rand::random::<[u8; 16]>();
+        let ct: [u8; 48] = encryption(&ek, &t);
+        let hk: [u8; 16] = hk_gen(&tk);
+        let p_tag = tag_proc(&t, &hk);
+        MsgPacket::new_with_ek(&tag_key, message, &t, &ek, &ct, &p_tag)
     }
 
     // proc_msg:
@@ -90,12 +110,12 @@ pub mod messaging {
         let map_id_key = db_ik::query(&vec![sess.sid]);
         let ik = map_id_key.get(&sess.sid).unwrap();
         let tk = tk_gen(ik, &sess.rid);
-        let (_,pk) = vrf_pkgen(&tk);
-        packet.vrf_pk = pk;
+        let hk = hk_gen(&tk);
+        packet.hk = hk;
     }
 
     pub fn store_tag(packet: &mut MsgPacket) {
-        let _ = db_tag::add(&vec![encode(packet.tag)]);
+        let _ = db_tag::add(&vec![encode(packet.prf)]);
     }
 
     // vrf_msg:
@@ -103,8 +123,14 @@ pub mod messaging {
         // 1. Decrypts E2EE
         // 2. Compute prf = F_k(m)
         let prf = prf_gen(&packet.tag_key, &packet.payload);
+        // copy ct_1 and ct_2 to ct
+        let mut ct: [u8; 48] = [0;48];
+        let (one, two) = ct.split_at_mut(packet.ct_1.len());
+        one.copy_from_slice(&packet.ct_1);
+        two.copy_from_slice(&packet.ct_2);
+        let tag = decryption(&packet.epheral_key, &ct);
         // 3. Verify tag
-        return vrf_verify(&packet.vrf_pk, &prf.to_vec(), &packet.vrf_pi, &packet.tag.to_vec());
+        prf == tag
     }
 
     // report_msg:
@@ -128,7 +154,7 @@ mod tests {
     extern crate test;
     // use rand::random;
 
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::time::{Instant, Duration};
 
     use aes_gcm::{Aes128Gcm, KeyInit};
     use base64::{encode, decode};
@@ -148,10 +174,6 @@ mod tests {
     //     let _ = env_logger::builder().is_test(true).try_init();
     // }
 
-    fn proc_msg(tk: &[u8;16], packet: &mut MsgPacket) {
-        (_,packet.vrf_pk) = vrf_pkgen(tk);
-    }
-
     #[test]
     fn snd_rcv_msg() {
         let tk = rand::random::<[u8; 16]>();
@@ -159,8 +181,15 @@ mod tests {
         let prev_key = rand::random::<[u8; 16]>();
         
         let mut packet = send_packet(&encode(message), &prev_key, &tk);
-        proc_msg(&tk, &mut packet);
         assert!(receive_packet(&packet));
+    }
+
+    #[test]
+    fn test_send_packet() {
+        let tk = rand::random::<[u8; 16]>();
+        let message = rand::random::<[u8; 16]>();
+        let prev_key = rand::random::<[u8; 16]>();
+        send_packet(&encode(message), &prev_key, &tk);
     }
 
     #[bench]
@@ -176,8 +205,6 @@ mod tests {
         let message = rand::random::<[u8; 16]>();
         let tk = rand::random::<[u8; 16]>();
         let mut packet = send_packet(&encode(message),&[0;16], &tk);
-        let (_,pk) = vrf_pkgen(&tk);
-        packet.vrf_pk = pk;
 
         b.iter(|| receive_packet(&packet));
     }
@@ -189,10 +216,10 @@ mod tests {
         let message = rand::random::<[u8; 16]>();
 
         let ik: [u8; 16] = rand::random::<[u8; 16]>();
-        let tk = tk_gen(&ik, &rid);
+        let tk: [u8; 16] = tk_gen(&ik, &rid);
         let tag_key = new_key_gen(&tk);
         let sess = Edge::new( &sid, &rid);
-        let (tag,_) = tag_gen(&tag_key, &tk, &encode(message));
+        let tag = proc_tag_gen(&tag_key, &tk, &encode(message));
 
         let _ = db_ik::add(&vec![IdKey {id: sess.sid, key: ik}]);
         let _ = db_nbr::add(&vec![sess.clone()]);
@@ -205,34 +232,23 @@ mod tests {
 // Test messaging runtime
 // -------------------------------------------------------------------------------------------------
 
-    fn test_send(message: &String, prev_key: &[u8; 16], tk: &[u8; 16], vrf_instance: &mut ECVRF) {
-        let tag_key = next_key(prev_key, tk);
-        // let tag_key = new_key_gen(tk);
-        let prf = prf_gen(&tag_key, message);
-        let sk = &tk[..].to_vec();
-        let pi = vrf_instance.prove(&sk, &prf.to_vec()).unwrap();
-        let hash = vrf_instance.proof_to_hash(&pi).unwrap();
-        // convert hash to [u8; 32]
-        let mut hash_arr: [u8; 32] = Default::default();
-        hash_arr.copy_from_slice(&hash[..]);
-        MsgPacket::new(&tag_key, message, &pi, &hash_arr);
-    }
-
-    #[bench]
-    fn bench_send(b: &mut Bencher) {
-        let message = encode(rand::random::<[u8; 16]>());
-        let prev_key = rand::random::<[u8; 16]>();
-        let tk = rand::random::<[u8; 16]>();
-        let mut vrf = ECVRF::from_suite(CipherSuite::P256_SHA256_TAI).unwrap();
-        b.iter(|| test_send(&message, &prev_key, &tk, &mut vrf));
-    }
-
-    #[bench]
-    fn bench_process_message(b: &mut Bencher) {
-        let tk = rand::random::<[u8; 16]>();
-        let mut vrf = ECVRF::from_suite(CipherSuite::P256_SHA256_TAI).unwrap();
-        let secret_key = &tk[..].to_vec();
-        b.iter(|| vrf.derive_public_key(&secret_key).unwrap());
+    #[test]
+    fn test_plt_proc() {
+        let mut count: Duration = Default::default();
+        let loop_count = 100;
+        for _ in 0..loop_count {
+            let tk = rand::random::<[u8; 16]>();
+            let uid = rand::random::<u32>();
+            let id_key = IdKey::rand_key_gen(uid);
+            db_ik::add(&vec![id_key]).ok();
+    
+            let st = Instant::now();
+            let _ = hk_gen(&tk);
+            db_ik::query(&vec![uid]);
+            let et = st.elapsed();
+            count += et;
+        }
+        println!("Average time: {:?}", count/loop_count);
     }
 
     #[bench]

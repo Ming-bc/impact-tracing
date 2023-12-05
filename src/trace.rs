@@ -5,7 +5,6 @@ pub mod traceback {
 
     use std::collections::{HashSet, HashMap};
     use std::sync::{Arc, Mutex};
-    use std::time::Instant;
     use std::{thread, fmt};
     use crate::message::messaging::{MsgReport, Edge};
     use crate::tool::algos;
@@ -83,7 +82,7 @@ pub mod traceback {
             let tags_hmap = par_tags.clone();
             
             let handle = thread::spawn(move || {
-                let (bwd_tag,_) = algos::tag_gen(&lock_key, &tk, &lock_message);
+                let bwd_tag = algos::proc_tag_gen(&lock_key, &tk, &lock_message);
                 let mut tags = tags_hmap.lock().unwrap();
                 tags.insert(i, encode(&bwd_tag[..]));
             });
@@ -138,7 +137,7 @@ pub mod traceback {
                 let handle = thread::spawn(move || {
                     let next_key = algos::next_key(&lock_key, &tk);
                     // let (tag, _) = algos::optimize_tag_gen(&next_key, &tk, &lock_message, &mut lock_vrf);
-                    let (tag, _) = algos::tag_gen(&next_key, &tk, &lock_message);
+                    let tag = algos::proc_tag_gen(&next_key, &tk, &lock_message);
                     let mut next_keys = next_key_hmap.lock().unwrap();
                     next_keys.insert(j, next_key);
                     let mut tags = tags_hmap.lock().unwrap();
@@ -252,7 +251,7 @@ pub mod tests {
     use base64::encode;
     use rand;
     
-    use crate::{db::{db_tag, db_ik, db_nbr}, message::messaging::{self, IdKey}, tool::algos::tk_gen};
+    use crate::{db::{db_tag, db_ik, db_nbr}, message::messaging::{self, IdKey}, tool::algos::{tk_gen, proc_tag_gen, tag_proc}};
     use crate::trace::traceback::{self, TraceData};
     use crate::message::messaging::{MsgPacket, Edge, MsgReport};
     
@@ -356,7 +355,7 @@ pub mod tests {
                 let rid = root * branch + i + 1;
                 vec_edge.push(Edge::new(root, &rid));
                 let packet = fwd_edge_gen(message, root, &rid, prev_packet, map_id_ik);
-                vec_tag.push(encode(packet.tag));
+                vec_tag.push(encode(packet.p_tag));
                 mock_tree_recursive(&rid, &packet, branch, &(curr_depth + 1), depth, message, map_id_ik, vec_tag, vec_edge);
             }
         }
@@ -375,7 +374,7 @@ pub mod tests {
         let map_id_ik = db_ik::query(&vec![*sid]);
         let tk = tk_gen(map_id_ik.get(sid).unwrap(), rid);
         let packet = messaging::send_packet(message, &[0;16], &tk);
-        let _ = db_tag::add(&vec![encode(packet.tag)]);
+        let _ = db_tag::add(&vec![encode(packet.p_tag)]);
         packet
     }
 
@@ -400,7 +399,7 @@ pub mod tests {
             let prev_key = *tag_keys.get(i).unwrap();
             let packet = messaging::send_packet(message, &prev_key, &tk);
             tag_keys.push(packet.tag_key);
-            tags.push(encode(packet.tag));
+            tags.push(encode(packet.p_tag));
         }
         let _ = db_tag::add(&tags);
         tag_keys

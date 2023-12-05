@@ -68,7 +68,7 @@ pub mod rwc_eval {
         let map_id_ik = db_ik::query(&vec![*sid]);
         let tk = tk_gen(map_id_ik.get(sid).unwrap(), rid);
         let packet = send_packet(message, &[1;16], &tk);
-        let _ = db_tag::add(&vec![encode(packet.tag)]);
+        let _ = db_tag::add(&vec![encode(packet.p_tag)]);
         packet
     }
 
@@ -144,7 +144,7 @@ pub mod rwc_eval {
                 .for_each(|(sid,rid)| {
                     let tk = tk_gen(map_id_ik.get(&(*sid as u32)).unwrap(), &(*rid as u32));
                     let packet = send_packet(message, key, &tk);
-                    let _ = db_tag::add(&vec![encode(packet.tag)]);
+                    let _ = db_tag::add(&vec![encode(packet.p_tag)]);
                     keys.insert(*rid as u32, packet.tag_key); 
                     recursive_mock_send(&(*rid as u32), &packet.tag_key, message, expl_user, edge_list, map_id_ik, keys);
                 })
@@ -177,10 +177,10 @@ mod tests {
         let sys_graph = import_graph("./graphs/message.txt".to_string());
         // let sys_graph = import_graph("./graphs/email.txt".to_string());
         // s2i: 0.05, i2r: 0.4-0.9; s2i: 0.03-0.08, i2r: 0.7;
-        // let s2i_list = vec![0.05];
-        // let i2r_list = vec![0.4, 0.5, 0.6, 0.7, 0.8, 0.9];
-        let s2i_list = vec![0.03, 0.04, 0.05, 0.06, 0.07, 0.08];
-        let i2r_list = vec![0.7];
+        let s2i_list = vec![0.05];
+        let i2r_list = vec![0.4, 0.5, 0.6, 0.7, 0.8, 0.9];
+        // let s2i_list = vec![0.03, 0.04, 0.05, 0.06, 0.07, 0.08];
+        // let i2r_list = vec![0.7];
         let trace_fpr: f32 = 0.01;
         let loop_index = 10;
 
