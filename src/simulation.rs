@@ -209,6 +209,7 @@ pub mod sir {
             nodes_state.insert(n.0, Condition::Susceptible);
         }
         // set start node
+        // TODO: CollegeIM: 719; Enron: 1
         let start_index = NodeIndex::new(719);
         if let Some(x) = nodes_state.get_mut(&start_index) {
             *x = Condition::Infective;
@@ -724,11 +725,11 @@ mod tests {
     #[test]
     fn test_fuzz_ours() {
         let sys_graph = import_graph("./graphs/message.txt".to_string());
-        let trace_fpr: f32 = 0.005;
+        let trace_fpr: f32 = 0.05;
 
         loop {
-            // 1.Generate a forward graph that start in node 719 by SIR algorithm
-            // In our paper, we present the results of SIR = (5%, 60%) in College IM dataset, and SIR (3%, 70%) in EU email dataset.
+            // 1.Generate a forward graph that start in node 719 (CollegeIM) by SIR algorithm
+            // The parameter of SIR is: (5%, 60%) for CollegeIM and (3%, 70%) for EUemail
             let (infected_edges, node_src) = sir::sir_spread(&20, &0.05, &0.6, &sys_graph.clone());
             if infected_edges.len() < 200 {
                 continue;

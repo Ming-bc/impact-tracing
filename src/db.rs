@@ -6,7 +6,9 @@ pub mod db_tag {
     extern crate lazy_static;
 
     use redis::Connection;
-    const DB_TAG_IP: &str = "redis://localhost:6402/";
+    use dotenv::dotenv;
+    use std::env;
+    // const DB_TAG_IP: &str = "redis://localhost:6402/";
     const SET_NAME: &str = "tags";
 
     lazy_static::lazy_static! {
@@ -14,7 +16,9 @@ pub mod db_tag {
     }
 
     pub fn create_redis_set_client() -> redis::Client {
-        redis::Client::open(DB_TAG_IP).unwrap()
+        dotenv().ok();
+        let db_tag_ip: String = env::var("DB_TAG_IP").expect("DB_TAG_IP is undefined.");
+        redis::Client::open(db_tag_ip).unwrap()
     }
 
     pub fn get_set_conn() -> redis::RedisResult<Connection> {
@@ -67,18 +71,20 @@ pub mod db_ik {
     extern crate lazy_static;
 
     use std::collections::HashMap;
+    use dotenv::dotenv;
+    use std::env;
     use redis::Connection;
     use lazy_static::lazy_static;
     use crate::message::messaging::IdKey;
-
-    const DB_IK_IP: &str = "redis://localhost:6400/";
 
     lazy_static! {
         pub static ref DB_IK_CONN: redis::Client = create_redis_client();
     }
 
     fn create_redis_client() -> redis::Client {
-        redis::Client::open(DB_IK_IP).unwrap()
+        dotenv().ok();
+        let db_ik_ip: String = env::var("DB_IK_IP").expect("DB_IK_IP is undefined.");
+        redis::Client::open(db_ik_ip).unwrap()
     }
 
     pub fn get_redis_conn() -> redis::RedisResult<Connection> {
@@ -130,19 +136,21 @@ pub mod db_nbr {
     extern crate lazy_static;
 
     use std::collections::HashMap;
+    use std::env;
 
     use redis::Connection;
+    use dotenv::dotenv;
     use lazy_static::lazy_static;
     use crate::message::messaging::Edge;
-
-    const DB_NBR_IP: &str = "redis://localhost:6401/";
 
     lazy_static! {
         pub static ref DB_NBR_CONN: redis::Client = create_redis_client();
     }
 
     fn create_redis_client() -> redis::Client {
-        redis::Client::open(DB_NBR_IP).unwrap()
+        dotenv().ok();
+        let db_nbr_ip: String = env::var("DB_NBR_IP").expect("DB_NBR_IP is undefined.");
+        redis::Client::open(db_nbr_ip).unwrap()
     }
 
     pub fn get_redis_conn() -> redis::RedisResult<Connection> {

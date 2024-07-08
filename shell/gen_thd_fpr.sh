@@ -14,7 +14,7 @@ inf_detect_dir=$inf_detect_name$suffix
 fuz_fpr_dir=$fuz_fpr_name$suffix
 
 
-for ((i=1; i<=50; i++))
+for ((i=1; i<=10; i++))
     do
         cd ../
         cargo test test_fuzz_ours
