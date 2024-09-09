@@ -3,56 +3,85 @@
 pub mod messaging {
     extern crate base64;
 
+    use std::default;
+
     use crate::tool::algos::*;
     // use crate::tool:: utils::*;
-    use crate::db::{bloom_filter, redis_pack};
-    use base64::decode;
+    use crate::db::{db_tag, db_ik};
+    use crate::tool::utils::{hash, encryption, decryption};
+    use base64::encode;
     use serde::{Serialize, Deserialize};
 
-    pub enum FwdType {
-        Send,
-        Receive,
-    }
-
+    #[derive(Serialize, Deserialize, Debug, Clone)]
     pub struct Edge {
-        pub sender: u32,
-        pub receiver: u32,
+        pub sid: u32,
+        pub rid: u32,
     }
 
     impl Edge {
-        pub fn new(snd_id: u32, rcv_id: u32) -> Edge {
-            Edge { sender: snd_id, receiver: rcv_id }
+        pub fn new(sid: &u32, rid: &u32) -> Edge {
+            Edge { sid: *sid, rid: *rid }
         }
         pub fn show(&self) {
-            print!("U{} - U{}, ", self.sender, self.receiver);
+            print!("U{} - U{}, ", self.sid, self.rid);
         }
     }
 
-    #[derive(Serialize, Deserialize, Debug)]
-    pub struct MsgPacket {
+    #[derive(Debug)]
+    pub struct IdKey {
+        pub id: u32,
         pub key: [u8; 16],
-        pub tag: [u8; 32],
+    }
+
+    impl IdKey {
+        pub fn rand_key_gen(id: u32) -> IdKey {
+            let key = rand::random::<[u8; 16]>();
+            IdKey { id, key }
+        }
+        pub fn id_as_key_gen (id: u32) -> IdKey {
+            let key = hash(&(id).to_string());
+            IdKey { id, key }
+        }
+    }
+
+    #[derive(Serialize,Deserialize,Debug)]
+    pub struct MsgPacket {
+        pub tag_key: [u8; 16],
+        pub epheral_key: [u8; 16],
+        pub prf: [u8; 32],
         pub payload: String, // base64 encode string
+        pub hk: [u8; 16],
+        pub p_tag: [u8; 32],
+        pub ct_1: [u8; 32],
+        pub ct_2: [u8; 16],
     }
 
     impl MsgPacket {
-        pub fn new(tag_key: &[u8; 16], message: &str) -> Self {
-            let msg_tag = tag_gen(&tag_key, &decode(message.clone()).unwrap()[..]);
+        pub fn new(tag_key: &[u8; 16], message: &String, prf: &[u8;32]) -> Self {
             MsgPacket {
-                key: *tag_key,
-                tag: msg_tag,
-                payload: message.to_string(),
+                tag_key: *tag_key, // 128 bits aes output
+                prf: *prf, // 256 bits hash output
+                epheral_key: rand::random::<[u8; 16]>(), // 128 bits aes key
+                payload: message.clone(), 
+                hk: Default::default(),
+                p_tag: Default::default(),
+                ct_1: Default::default(),
+                ct_2: Default::default(),
             }
         }
-
-        pub fn vrf_tag(&self) -> bool {
-            let tag_hat = tag_gen(&self.key, &decode(self.payload.clone()).unwrap()[..]);
-            if tag_hat != self.tag {
-                return false;
+        pub fn new_with_ek(tag_key: &[u8; 16], message: &String, prf: &[u8;32], ek: &[u8;16], ct: &[u8;48], p_tag: &[u8;32]) -> Self {
+            MsgPacket {
+                tag_key: *tag_key, // 128 bits aes output
+                prf: *prf, // 256 bits hash output
+                epheral_key: *ek, // 128 bits aes key
+                payload: message.clone(), 
+                hk: Default::default(),
+                p_tag: *p_tag,
+                // gen ct_1 and ct_2
+                ct_1: ct[..32].try_into().unwrap(),
+                ct_2: ct[32..].try_into().unwrap(),
             }
-            true
         }
-
     }
 
     #[derive(Serialize, Deserialize, Debug)]
@@ -61,83 +90,59 @@ pub mod messaging {
         pub payload: String,
     }
 
-    impl MsgReport {
-        pub fn new (report_key: [u8; 16], message: String) -> Self {
-            MsgReport { key: report_key, payload: message }
-        }
-    }
-
-    #[derive(Serialize, Deserialize, Debug, Clone)]
-    pub struct Session {
-        pub id: String,
-        pub sender: u32,
-        pub receiver: u32,
-    }
-
-    impl Session {
-        pub fn new (sid: &String, snd_id: &u32, rcv_id: &u32) -> Self {
-            Session { id: sid.clone(), sender: snd_id.clone(), receiver: rcv_id.clone() }
-        }
-        
-        pub fn show (&self) {
-            println!("Sender {}, Receiver {}, ID {}", self.sender, self.receiver, self.id);
-        }
-    }
-
-    // new_msg:
-    pub fn new_msg(bk: &[u8; 16], message: &str) -> MsgPacket {
-        let tag_key = new_key_gen(bk);
-        MsgPacket::new(&tag_key, message)
-    }
-    // fwd_msg:
-    pub fn fwd_msg(key: &[u8; 16], bk: &Vec<[u8; 16]>, message: &str, fwd_type: FwdType) -> MsgPacket {
-        let tag_key:[u8; 16];
-        let curr_bk = bk.get(0).unwrap();
-
-        match fwd_type {
-            FwdType::Send => {
-                let prev_bk = bk.get(1).unwrap();
-                let k_p = prev_key(key, prev_bk);
-                tag_key = next_key(&k_p, curr_bk)
-            },
-            FwdType::Receive => tag_key = next_key(key, curr_bk),
-        }
-        MsgPacket::new(&tag_key, message)
-    }
-
-    pub fn send_packet(msg_packet: MsgPacket, session: Session) -> (MsgPacket, Session) {
-        // TODO: serilize
-        (msg_packet, session)
+    pub fn send_packet(message: &String, prev_key: &[u8; 16], tk: &[u8; 16]) -> MsgPacket {
+        // if tk is null then generate a new tag key
+        let tag_key = if prev_key == &[0; 16] {
+            new_key_gen(tk)
+        } else {
+            next_key(prev_key, tk)
+        };
+        let t: [u8; 32] = prf_gen(&tag_key, message);
+        let ek: [u8; 16] = rand::random::<[u8; 16]>();
+        let ct: [u8; 48] = encryption(&ek, &t);
+        let hk: [u8; 16] = hk_gen(&tk);
+        let p_tag = tag_proc(&t, &hk);
+        MsgPacket::new_with_ek(&tag_key, message, &t, &ek, &ct, &p_tag)
     }
 
     // proc_msg:
-    pub fn proc_msg(sess: Session, packet: MsgPacket) -> bool {
-        let sid = redis_pack::query_sid(&sess.sender, &sess.receiver).clone();
-        let bk = <&[u8; 16]>::try_from(&decode(sid).unwrap()[..]).unwrap().clone();
-        let store_tag = proc_tag(&bk, &packet.tag);
-        bloom_filter::add(&store_tag).is_ok()
+    pub fn plt_proc_packet(sess: &Edge, packet: &mut MsgPacket) {
+        let map_id_key = db_ik::query(&vec![sess.sid]);
+        let ik = map_id_key.get(&sess.sid).unwrap();
+        let tk = tk_gen(ik, &sess.rid);
+        let hk = hk_gen(&tk);
+        packet.hk = hk;
     }
 
-    // pub fn rcv_packet(msg_packet: MsgPacket, session: Session) -> bool {
-        
-    // }
+    pub fn store_tag(packet: &mut MsgPacket) {
+        let _ = db_tag::add(&vec![encode(packet.prf)]);
+    }
 
     // vrf_msg:
-    pub fn receive_msg(packet: MsgPacket) -> bool {
+    pub fn receive_packet(packet: &MsgPacket) -> bool {
         // 1. Decrypts E2EE
-        // 2. Compute ^tag
-        packet.vrf_tag()
+        // 2. Compute prf = F_k(m)
+        let prf = prf_gen(&packet.tag_key, &packet.payload);
+        // copy ct_1 and ct_2 to ct
+        let mut ct: [u8; 48] = [0;48];
+        let (one, two) = ct.split_at_mut(packet.ct_1.len());
+        one.copy_from_slice(&packet.ct_1);
+        two.copy_from_slice(&packet.ct_2);
+        let tag = decryption(&packet.epheral_key, &ct);
+        // 3. Verify tag
+        prf == tag
     }
 
     // report_msg:
-    pub fn sub_report(tag_key: &[u8;16], message: &str, sender: u32, receiver: u32) -> (MsgReport, Session) {
-        let sid = " ";
-        (MsgReport { key: *tag_key, payload: message.to_string()}, Session::new(&sid.to_string(), &sender, &receiver))
+    pub fn submit_report(tag_key: &[u8;16], message: &String, sess: &Edge) -> (MsgReport, Edge) {
+        (MsgReport { key: *tag_key, payload: message.clone()}, sess.clone())
     }
 
-    pub fn vrf_report(sess: Session, report: MsgReport) -> bool {
-        let bk = &decode(redis_pack::query_sid(&sess.sender, &sess.receiver).clone()).unwrap()[..];
-        tag_exists(&sess.sender, &report.key, <&[u8; 16]>::try_from(bk).unwrap(), &decode(report.payload.clone()).unwrap()[..])
+    pub fn verify_report(sess: &Edge, report: &MsgReport) -> bool {
+        let map_id_key = db_ik::query(&vec![sess.sid]);
+        let ik = map_id_key.get(&sess.sid).unwrap();
+        let tk = tk_gen(ik, &sess.rid);
+        tag_exists( &report.key, &tk, &report.payload)
     }
     
 }
@@ -149,11 +154,20 @@ mod tests {
     extern crate test;
     // use rand::random;
 
+    use std::time::{Instant, Duration};
+
+    use aes_gcm::{Aes128Gcm, KeyInit};
     use base64::{encode, decode};
     use test::Bencher;
-    use crate::db::{redis_pack, bloom_filter};
+    use vrf::VRF;
+    use vrf::openssl::{ECVRF, CipherSuite};
+    use crate::db::{db_tag, db_nbr, db_ik};
     use crate::message::messaging::*;
     use crate::tool::algos::*;
+    use aes_gcm::{
+        aead::{Aead, AeadCore, OsRng},
+        Aes256Gcm, Nonce, Key // Or `Aes128Gcm`
+    };
 
     // fn init_logger() {
     //     //env_logger::init();
@@ -161,121 +175,101 @@ mod tests {
     // }
 
     #[test]
-    fn build_verify_tag() {
-        let message = rand::random::<[u8; 16]>();
-        let msg_str = encode(&message[..]);
-        assert_eq!(message, decode(msg_str.clone()).unwrap()[..],
-            "Encode or decode failed");
-        let tag_key = rand::random::<[u8; 16]>();
-        let packet = MsgPacket::new(&tag_key, &msg_str);
-        assert!(receive_msg(packet))
-    }
-
-    #[test]
     fn snd_rcv_msg() {
-        let bk = rand::random::<[u8; 16]>();
+        let tk = rand::random::<[u8; 16]>();
         let message = rand::random::<[u8; 16]>();
-        let packet = new_msg(&bk, &encode(&message[..]));
-        // false result test
-        let packet_false = MsgPacket {
-            payload: packet.payload.clone(),
-            key: packet.key,
-            tag: tag_gen(&bk, &message),
-        };
-        assert!(receive_msg(packet));
-        assert_ne!(receive_msg(packet_false), true);
+        let prev_key = rand::random::<[u8; 16]>();
+        
+        let mut packet = send_packet(&encode(message), &prev_key, &tk);
+        assert!(receive_packet(&packet));
     }
 
     #[test]
-    fn report_msg() {
-        let snd_id: u32 = 2806396777;
-        let rcv_id: u32 = 259328394;
-
+    fn test_send_packet() {
+        let tk = rand::random::<[u8; 16]>();
         let message = rand::random::<[u8; 16]>();
-        let msg_str = encode(&message[..]);
-        let tag_key = rand::random::<[u8; 16]>();
-        let packet = MsgPacket::new(&tag_key, &msg_str);
-        let sess = Session::new(&0.to_string(), &snd_id, &rcv_id);
-        assert!(proc_msg(sess, packet), "Proc failed");
-        let (report, sess_sub) = sub_report(&tag_key, &encode(&message[..]), snd_id, rcv_id);
-        assert!(vrf_report(sess_sub, report), "Verify failed");
-    }
-
-    // Bench cannot test the runtime of proc_tag, since it contains DB queries
-    #[test]
-    fn test_process_message() {
-        let snd_id: u32 = rand::random::<u32>();
-        let rcv_id: u32 = rand::random::<u32>();
-        let sid = encode(&rand::random::<[u8; 16]>()[..]);
-        let ses = Session::new(&sid, &snd_id, &rcv_id);
-        let message = encode(&rand::random::<[u8; 16]>()[..]);
-        let tag = MsgPacket::new(&rand::random::<[u8; 16]>(), &message).tag;
-
-        redis_pack::pipe_add(&mut vec![ses.clone()]).ok().unwrap();
-
-        // test proc_msg loop times
-        let mut count = 0.0;
-        let loop_i: u32 = 500;
-        for _i in 0..loop_i {
-            let start = std::time::Instant::now();
-            proc_msg_for_test(&ses, &tag);
-            let end = std::time::Instant::now();
-            let dur = end.duration_since(start);
-            count += (dur.as_micros() as f64) / (loop_i as f64);
-        }
-        
-        println!("proc_msg average time: {}us", count);
-    }
-
-    // This function is identical to proc_msg without MsgPacket packing
-    fn proc_msg_for_test(sess: &Session, tag: &[u8; 32]) -> bool {
-        let sid = redis_pack::query_sid(&sess.sender, &sess.receiver).clone();
-        let binding = decode(sid).unwrap();
-        let bk = <&[u8; 16]>::try_from(&binding[..]).unwrap();
-        let store_tag = proc_tag(&bk, tag);
-        bloom_filter::add(&store_tag).is_ok()
+        let prev_key = rand::random::<[u8; 16]>();
+        send_packet(&encode(message), &prev_key, &tk);
     }
 
     #[bench]
-    fn bench_new_message(b: &mut Bencher) {
-        let bk = rand::random::<[u8; 16]>();
+    fn bench_send_message(b: &mut Bencher) {
+        let tk = rand::random::<[u8; 16]>();
         let message = rand::random::<[u8; 16]>();
-
-        b.iter(|| new_msg(&bk, &encode(&message[..])));
-    }
-
-    #[bench]
-    fn bench_forward_message(b: &mut Bencher) {
-        let bk = rand::random::<[u8; 16]>();
-        let key = rand::random::<[u8; 16]>();
-        let message = rand::random::<[u8; 16]>();
-        let msg_str = encode(&message[..]);
-        
-        b.iter(||fwd_msg(&key, &vec![bk], &msg_str, FwdType::Receive));
-    }
-
-    #[bench]
-    fn bench_send_msg(b: &mut Bencher) {
-        let bk = rand::random::<[u8; 16]>();
-        let message = rand::random::<[u8; 16]>();
-        let key = rand::random::<[u8; 16]>();
-
-        b.iter(||send_msg_for_test(&bk, &key, &message));
+        let prev_key = rand::random::<[u8; 16]>();
+        b.iter(|| send_packet(&encode(message), &prev_key, &tk));
     }
 
     #[bench]
     fn bench_receive_message(b: &mut Bencher) {
         let message = rand::random::<[u8; 16]>();
-        let msg_str = encode(&message[..]);
-        let tag_key = rand::random::<[u8; 16]>();
-        let packet = MsgPacket::new(&tag_key, &msg_str);
+        let tk = rand::random::<[u8; 16]>();
+        let mut packet = send_packet(&encode(message),&[0;16], &tk);
 
-        b.iter(|| packet.vrf_tag());
+        b.iter(|| receive_packet(&packet));
     }
 
-    fn send_msg_for_test(bk: &[u8; 16], key: &[u8; 16], message: &[u8]) {
-        let k_p = next_key(key, bk);
-        tag_gen(&k_p, message);
+    #[test]
+    fn report_msg() {
+        let sid: u32 = rand::random::<u32>();
+        let rid: u32 = rand::random::<u32>();
+        let message = rand::random::<[u8; 16]>();
+
+        let ik: [u8; 16] = rand::random::<[u8; 16]>();
+        let tk: [u8; 16] = tk_gen(&ik, &rid);
+        let tag_key = new_key_gen(&tk);
+        let sess = Edge::new( &sid, &rid);
+        let tag = proc_tag_gen(&tag_key, &tk, &encode(message));
+
+        let _ = db_ik::add(&vec![IdKey {id: sess.sid, key: ik}]);
+        let _ = db_nbr::add(&vec![sess.clone()]);
+        let _ = db_tag::add(&vec![encode(tag)]);
+
+        let (report, sess_sub) = submit_report(&tag_key, &encode(message), &sess);
+        assert!(verify_report(&sess_sub, &report), "Verify failed");
     }
 
+// Test messaging runtime
+// -------------------------------------------------------------------------------------------------
+
+    #[test]
+    fn test_plt_proc() {
+        let mut count: Duration = Default::default();
+        let loop_count = 100;
+        for _ in 0..loop_count {
+            let tk = rand::random::<[u8; 16]>();
+            let uid = rand::random::<u32>();
+            let id_key = IdKey::rand_key_gen(uid);
+            db_ik::add(&vec![id_key]).ok();
+    
+            let st = Instant::now();
+            let _ = hk_gen(&tk);
+            db_ik::query(&vec![uid]);
+            let et = st.elapsed();
+            count += et;
+        }
+        println!("Average time: {:?}", count/loop_count);
+    }
+
+    #[bench]
+    fn bench_process_tag(b: &mut Bencher) {
+        let key = Aes128Gcm::generate_key(OsRng);
+        let cipher = Aes128Gcm::new(&key);
+        let nounce = Aes128Gcm::generate_nonce(&mut OsRng);
+        let ciphertext = cipher.encrypt(&nounce, b"plaintext".as_ref()).unwrap();
+        b.iter(|| cipher.decrypt(&nounce, ciphertext.as_ref()).unwrap());
+    }
+
+    #[bench]
+    fn bench_receive_tag(b: &mut Bencher) {
+        let mut vrf = ECVRF::from_suite(CipherSuite::P256_SHA256_TAI).unwrap();
+        let message = rand::random::<[u8; 16]>().to_vec();
+        let tk = rand::random::<[u8; 16]>();
+        let secret_key = &tk[..].to_vec();
+        let public_key = vrf.derive_public_key(&secret_key).unwrap();
+        let proof = vrf.prove(&secret_key, &message).unwrap();
+
+        b.iter(|| vrf.verify(&public_key, &proof, &message).unwrap());
+        // b.iter(|| vrf.prove(&secret_key, &message));
+    }
 }

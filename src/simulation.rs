@@ -9,6 +9,8 @@ pub mod utils {
     use std::{io::{prelude::*, BufReader}, collections::HashMap, fs::File};
     use std::fs;
 
+    use crate::tool::utils::hash;
+
     pub fn rand_state (prob: &f32) -> bool {
         let threshold: u32 = (prob * 1000.0) as u32;
         let coin = rand::random::<u32>() % 1000;
@@ -49,8 +51,13 @@ pub mod utils {
 
     pub fn dedup_vec_edges (list: &Vec<(usize,usize)>) -> Vec<(usize,usize)> {
         let mut exist_edge = Vec::<(usize,usize)>::new();
+        let mut contained_edges = Vec::<[u8;16]>::new();
         list.iter().for_each(|e| {
-            if !exist_edge.contains(e) & !exist_edge.contains(&(e.1, e.0)) {
+            let tag_1 = hash(&(e.0.to_string() + &e.1.to_string()));
+            let tag_2 = hash(&(e.1.to_string() + &e.0.to_string()));
+            if !(contained_edges.contains(&tag_1)&contained_edges.contains(&tag_2)) {
+                contained_edges.push(tag_1);
+                contained_edges.push(tag_2);
                 exist_edge.push(*e);
             }
         });
@@ -118,6 +125,14 @@ pub mod utils {
         let mut f = File::create(dir).unwrap();
         let output = format!("{:?}", Dot::with_config(g, &[]));
         let _ = f.write_all(&output.as_bytes());
+    }
+
+    pub fn derive_graph_id_wt_map (g: &Graph<usize, usize>) -> HashMap<usize, usize> {
+        let mut id_wt_map = HashMap::<usize, usize>::new();
+        g.node_references().for_each(|(node, wt)| {
+            id_wt_map.insert(node.index(), *wt);
+        });
+        id_wt_map
     }
 
     pub fn graph_to_dot_for_draw(fwd_edge_list: &Vec<(usize,usize)>, fuzz_edge_list: &HashMap<(usize, usize), (usize, usize)>, sys_graph: &UnGraph<usize, ()>, dir: &String) {
@@ -194,6 +209,7 @@ pub mod sir {
             nodes_state.insert(n.0, Condition::Susceptible);
         }
         // set start node
+        // TODO: CollegeIM: 719; Enron: 1
         let start_index = NodeIndex::new(719);
         if let Some(x) = nodes_state.get_mut(&start_index) {
             *x = Condition::Infective;
@@ -250,9 +266,7 @@ pub mod fuzzy_traceback {
     use petgraph::prelude::UnGraph;
     use probability::{distribution::Binomial, prelude::Discrete};
 
-    use crate::simulation::sir;
-
-    use super::{utils::{rand_state, vec_to_graph, hmap_to_graph, import_graph}, sir::vec_edge_exists};
+    use super::{utils::{rand_state, vec_to_graph, hmap_to_graph}, sir::vec_edge_exists};
 
     #[derive(Debug, Clone, PartialEq)]
     pub struct TraceMd {
@@ -662,9 +676,9 @@ pub mod fuzzy_traceback {
 #[cfg(test)]
 mod tests {
     extern crate test;
-    use std::collections::HashMap;
+    use std::{collections::HashMap, fmt::write};
 
-    use crate::simulation::{sir, fuzzy_traceback::{fuzz_bfs, self, degree_analysis, fuzzy_trace_ours, calc_fuz_val}, utils::{import_graph, graph_to_dot, fuz_val_to_graph, write_val_to_file, hmap_to_graph, vec_to_graph, gen_raw_data_file, graph_to_dot_for_draw}};
+    use crate::simulation::{sir, fuzzy_traceback::{fuzz_bfs, self, degree_analysis, fuzzy_trace_ours, calc_fuz_val}, utils::{import_graph, graph_to_dot, fuz_val_to_graph, write_val_to_file, hmap_to_graph, vec_to_graph, gen_raw_data_file, graph_to_dot_for_draw, derive_graph_id_wt_map}};
 
     use super::utils::dedup_in_db_file;
   
@@ -711,11 +725,11 @@ mod tests {
     #[test]
     fn test_fuzz_ours() {
         let sys_graph = import_graph("./graphs/message.txt".to_string());
-        let trace_fpr: f32 = 0.005;
+        let trace_fpr: f32 = 0.05;
 
         loop {
-            // 1.Generate a forward graph that start in node 719 by SIR algorithm
-            // In our paper, we present the results of SIR = (5%, 60%) in College IM dataset, and SIR (3%, 70%) in EU email dataset.
+            // 1.Generate a forward graph that start in node 719 (CollegeIM) by SIR algorithm
+            // The parameter of SIR is: (5%, 60%) for CollegeIM and (3%, 70%) for EUemail
             let (infected_edges, node_src) = sir::sir_spread(&20, &0.05, &0.6, &sys_graph.clone());
             if infected_edges.len() < 200 {
                 continue;
@@ -731,7 +745,7 @@ mod tests {
             let (mut bwd_traced_edges, mut fwd_traced_edges, max_depth) = fuzzy_trace_ours(&sys_graph, &fwd_graph, &fwd_to_sys_id_map, &node_src, &start_node, &trace_fpr);
 
             // 3. Compute fuzzy values of nodes in fuzzy graph by the membership function
-            let (mut node_tpr, edge_fpr) = calc_fuz_val(&(trace_fpr as f64), &max_depth, &start_node, &mut bwd_traced_edges, &mut fwd_traced_edges, &sys_graph);
+            let (mut memb_val, edge_fpr) = calc_fuz_val(&(trace_fpr as f64), &max_depth, &start_node, &mut bwd_traced_edges, &mut fwd_traced_edges, &sys_graph);
 
             // 3-1. insert deleted edges from bwd_edges to fwd_edges
             bwd_traced_edges.into_iter().filter(|((snd, rcv), _)| {
@@ -744,16 +758,20 @@ mod tests {
             let (full_fuz_graph, _) = hmap_to_graph(&fwd_traced_edges);
             println!("Full fuzzy Graph: node {:?}, edge {:?}", full_fuz_graph.node_count(), full_fuz_graph.edge_count());
 
-            let fuzzy_graph = fuz_val_to_graph(&full_fuz_graph, &node_tpr, &edge_fpr);
+            // write graph to file for k-shell comparison
+            graph_to_dot(&full_fuz_graph, "../Traceability-Evaluation/graphs/graph_fuzzy.dot".to_string());
+            let sys_to_fuzz_id_map = derive_graph_id_wt_map(&full_fuz_graph);
+            write_val_to_file(&sys_to_fuzz_id_map, "../Traceability-Evaluation/inputs/id_map_fuzz.txt".to_string());
+
+            let fuzzy_graph = fuz_val_to_graph(&full_fuz_graph, &memb_val, &edge_fpr);
             graph_to_dot(&fuzzy_graph, "./output/graph_fuzzy.dot".to_string());
 
             // 3-2. generate raw data file, where one line a tuple (node_id, is_true_positive, fuzzy_val)
-            node_tpr.insert(start_node, 0.90);
-            gen_raw_data_file(&node_tpr, &fwd_to_sys_id_map, "../Traceability-Evaluation/inputs/data_fuzzy_value.txt".to_string());
+            memb_val.insert(start_node, 0.85);
+            gen_raw_data_file(&memb_val, &fwd_to_sys_id_map, "../Traceability-Evaluation/inputs/data_fuzzy_value.txt".to_string());
 
             let sys_to_fwd_id_map: HashMap<usize,usize> = fwd_to_sys_id_map.iter().map(|(k,v)|
                 (v.index(), *k)).collect();
-            // sys_to_fwd_id_map.remove(&start_node);
             write_val_to_file(&sys_to_fwd_id_map, "../Traceability-Evaluation/inputs/id_map_fwd.txt".to_string());
 
             graph_to_dot_for_draw(&infected_edges, &fwd_traced_edges, &sys_graph, & "./output/full_graph_for_paper.dot".to_string());

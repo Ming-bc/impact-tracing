@@ -1,138 +1,172 @@
 #![allow(dead_code)]
 
-pub mod bloom_filter {
+pub mod db_tag {
     extern crate redis;
     extern crate base64;
     extern crate lazy_static;
 
-    // fpr: 0.000000005, items: 1000,000
     use redis::Connection;
-    use base64::encode;
-    use lazy_static::lazy_static;
+    use dotenv::dotenv;
+    use std::env;
+    // const DB_TAG_IP: &str = "redis://localhost:6402/";
+    const SET_NAME: &str = "tags";
 
-    const BF_IP: &str = "redis://localhost:6379/";
-    const BF_NAME: &str = "newFilter";
-
-    lazy_static! {
-        pub static ref BLOOM: redis::Client = create_bloom_filter_client();
+    lazy_static::lazy_static! {
+        pub static ref SET: redis::Client = create_redis_set_client();
     }
 
-    pub fn create_bloom_filter_client() -> redis::Client {
-        redis::Client::open(BF_IP).unwrap()
+    pub fn create_redis_set_client() -> redis::Client {
+        dotenv().ok();
+        let db_tag_ip: String = env::var("DB_TAG_IP").expect("DB_TAG_IP is undefined.");
+        redis::Client::open(db_tag_ip).unwrap()
     }
 
-    pub fn get_bf_conn() -> redis::RedisResult<Connection> {
-        Ok(BLOOM.get_connection()?)
+    pub fn get_set_conn() -> redis::RedisResult<Connection> {
+        Ok(SET.get_connection()?)
     }
 
-    pub fn add(bytes: &[u8; 6]) -> redis::RedisResult<()> {
-        let mut conn = get_bf_conn().unwrap();
-        let msg = encode(&bytes[..]);
-        let _ : () = redis::cmd("bf.add").arg(BF_NAME).arg(msg).query(&mut conn)?;
-        Ok(())
+    pub fn add(tags: &Vec<String>) -> redis::RedisResult<()> {
+        let mut conn = get_set_conn().unwrap();
+        redis::cmd("SADD").arg(SET_NAME).arg(tags).query(&mut conn)
     }
 
-    pub fn madd(keys: &Vec<String>) -> redis::RedisResult<()> {
-        let mut conn = get_bf_conn().unwrap();
-        let _ : () = redis::cmd("bf.madd").arg(BF_NAME).arg(keys).query(&mut conn)?;
-        Ok(())
-    }
-    
-    pub fn exists(bytes: &[u8; 6]) -> bool {
-        let mut conn = get_bf_conn().unwrap();
-        let msg = encode(&bytes[..]);
-        redis::cmd("bf.exists").arg(BF_NAME).arg(msg).query(&mut conn).unwrap()
+    pub fn exists(tag: &String) -> bool {
+        let mut conn = get_set_conn().unwrap();
+        redis::cmd("SISMEMBER").arg(SET_NAME).arg(tag).query(&mut conn).unwrap()
     }
 
-    pub fn mexists(keys: &mut Vec<String>) -> Vec<bool> {
-        let mut conn = get_bf_conn().unwrap();
-        let mut pipe = redis::Pipeline::new();
-
-        let mut result: Vec<bool> = Vec::new();
-        let mut threshold = 5000;
-        while keys.len() > threshold {
-            let store_keys = keys.split_off( keys.len() - threshold);
-            let command = redis::cmd("bf.mexists").arg(BF_NAME).arg(store_keys).to_owned();
-            pipe.add_command(command);
+    pub fn mexists(tags: &Vec<String>) -> Vec<bool> {
+        let mut conn = get_set_conn().unwrap();
+        if tags.len() == 0 {
+            panic!("keys.len() == 0");
         }
-        if keys.len() > 0 {
-            let command = redis::cmd("bf.mexists").arg(BF_NAME).arg(keys.to_owned()).to_owned();
-            pipe.add_command(command);
-        }
-
-        let query_result_vec: Vec<Vec<bool>> = pipe.query(&mut conn).unwrap();
-
-        for i in 0..query_result_vec.len() {
-            result.extend(query_result_vec.get(query_result_vec.len() - i - 1).unwrap());
-        }
+        let result: Vec<bool> = redis::cmd("SMISMEMBER").arg(SET_NAME).arg(tags).query(&mut conn).unwrap();
         result
     }
 
     pub fn mexists_pack(pack_keys: &Vec<Vec<String>>) -> Vec<Vec<bool>> {
-        let mut pack_result: Vec<Vec<bool>> = Vec::new();
-        let mut pack_keys_length: Vec<usize> = Vec::new();
-        let mut query_keys: Vec<String> = Vec::new();
+        let mut conn = get_set_conn().unwrap();
+        let mut pipe = redis::pipe();
 
         for keys in pack_keys {
-            pack_keys_length.push(keys.len());
-            for k in keys {
-                query_keys.push(k.to_string());
+            if keys.len() == 0 {
+                panic!("keys.len() == 0");
             }
+            let command = redis::cmd("SMISMEMBER").arg(SET_NAME).arg(keys.to_owned()).to_owned();
+            pipe.add_command(command);
         }
+        let result: Vec<Vec<bool>> = pipe.query(&mut conn).unwrap();
+        result
+    }
 
-        let mut query_result: Vec<bool> = mexists(&mut query_keys);
-
-        let mut count_bool: usize = 0;
-        for i in 0..pack_keys_length.len(){
-            let mut result: Vec<bool> = Vec::new();
-            for j in 0..*pack_keys_length.get(i).unwrap() {
-                result.push(*query_result.get(count_bool + j).unwrap());
-            }
-            count_bool += *pack_keys_length.get(i).unwrap();
-            pack_result.push(result);
-        }
-
-        pack_result
+    pub fn clear() {
+        let mut db_conn = get_set_conn().unwrap();
+        let _: () = redis::cmd("FLUSHDB").query(&mut db_conn).unwrap();
     }
 }
 
-pub mod redis_pack {
+pub mod db_ik {
     extern crate redis;
     extern crate base64;
     extern crate lazy_static;
 
-    use redis::{Connection, Commands};
-    use base64::{encode,decode};
+    use std::collections::HashMap;
+    use dotenv::dotenv;
+    use std::env;
+    use redis::Connection;
     use lazy_static::lazy_static;
-    use crate::message::messaging::{Session, FwdType, Edge};
-
-    const REDIS_IP: &str = "redis://localhost:6389/";
+    use crate::message::messaging::IdKey;
 
     lazy_static! {
-        pub static ref REDIS_CONN: redis::Client = create_redis_client();
+        pub static ref DB_IK_CONN: redis::Client = create_redis_client();
     }
 
     fn create_redis_client() -> redis::Client {
-        redis::Client::open(REDIS_IP).unwrap()
+        dotenv().ok();
+        let db_ik_ip: String = env::var("DB_IK_IP").expect("DB_IK_IP is undefined.");
+        redis::Client::open(db_ik_ip).unwrap()
     }
 
     pub fn get_redis_conn() -> redis::RedisResult<Connection> {
-        let redis_client = REDIS_CONN.get_connection();
+        let redis_client = DB_IK_CONN.get_connection();
         Ok(redis_client?)
     }
 
     // write BRANCH users at one time
-    pub fn add(sessions: &Vec<Session>) -> redis::RedisResult<()> {
+    pub fn add(vec_id_key: &Vec<IdKey>) -> redis::RedisResult<()> {
+        let mut conn = get_redis_conn().unwrap();
+        let mut pipe = redis::Pipeline::new();
+
+        for user in vec_id_key {
+            let ik = base64::encode(user.key);
+            let command = redis::cmd("SET").arg(user.id).arg(ik).to_owned();
+            pipe.add_command(command);
+        }
+        let _ : () = pipe.query(&mut conn)?;
+        Ok(())
+    }
+
+    pub fn query(vec_id: &Vec<u32>) -> HashMap<u32,[u8;16]> {
+        let mut conn = get_redis_conn().unwrap();
+        let mut pipe = redis::Pipeline::new();
+
+        for id in vec_id {
+            let command = redis::cmd("GET").arg(id).to_owned();
+            pipe.add_command(command);
+        }
+        let id_keys: Vec<String> = pipe.query(&mut conn).unwrap();
+        let mut map_id_key = HashMap::<u32,[u8;16]>::new();
+        for i in 0..vec_id.len() {
+            let q_ik = id_keys.get(i).unwrap();
+            let ik: [u8;16] = base64::decode(q_ik).unwrap().try_into().unwrap();
+            map_id_key.insert(*vec_id.get(i).unwrap(), ik);
+        }
+        map_id_key
+    }
+
+    pub fn clear() {
+        let mut db_conn = get_redis_conn().unwrap();
+        let _: () = redis::cmd("FLUSHDB").query(&mut db_conn).unwrap();
+    }
+}
+
+pub mod db_nbr {
+    extern crate redis;
+    extern crate base64;
+    extern crate lazy_static;
+
+    use std::collections::HashMap;
+    use std::env;
+
+    use redis::Connection;
+    use dotenv::dotenv;
+    use lazy_static::lazy_static;
+    use crate::message::messaging::Edge;
+
+    lazy_static! {
+        pub static ref DB_NBR_CONN: redis::Client = create_redis_client();
+    }
+
+    fn create_redis_client() -> redis::Client {
+        dotenv().ok();
+        let db_nbr_ip: String = env::var("DB_NBR_IP").expect("DB_NBR_IP is undefined.");
+        redis::Client::open(db_nbr_ip).unwrap()
+    }
+
+    pub fn get_redis_conn() -> redis::RedisResult<Connection> {
+        let redis_client = DB_NBR_CONN.get_connection();
+        Ok(redis_client?)
+    }
+
+    // write BRANCH users at one time
+    pub fn add(edges: &Vec<Edge>) -> redis::RedisResult<()> {
         let mut conn = get_redis_conn().unwrap();
         let mut pipe = redis::Pipeline::new();
 
         // pipe sender to receivers
-        for sess in sessions {
-            let sender = sess.sender;
-            let receiver = sess.receiver;
-            let key = sess.id.clone();
-            let command_1 = redis::cmd("HSET").arg(sender).arg(receiver).arg(key.clone()).to_owned();
-            let command_2 = redis::cmd("HSET").arg(receiver).arg(sender).arg(key).to_owned();
+        for e in edges {
+            let command_1 = redis::cmd("SADD").arg(e.sid).arg(e.rid).to_owned();
+            let command_2 = redis::cmd("SADD").arg(e.rid).arg(e.sid).to_owned();
             pipe.add_command(command_1);
             pipe.add_command(command_2);
         }
@@ -140,133 +174,26 @@ pub mod redis_pack {
         Ok(())
     }
 
-    fn from_vec_to_u8_array<T>(v: Vec<T>) -> [T; 16] {
-        let boxed_slice = v.into_boxed_slice();
-        let boxed_array: Box<[T; 16]> = match boxed_slice.try_into() {
-            Ok(ba) => ba,
-            Err(o) => panic!("Expected a Vec of length {} but it was {}", 16, o.len()),
-        };
-        *boxed_array
+    pub fn query(vec_uid: &Vec<u32>) -> HashMap<u32,Vec<u32>> {
+        let mut conn = get_redis_conn().unwrap();
+        let mut pipe = redis::Pipeline::new();
+
+        vec_uid.into_iter().for_each(|uid| {
+            let command = redis::cmd("SMEMBERS").arg(uid).to_owned();
+            pipe.add_command(command);
+        });
+        let result: Vec<Vec<u32>> = pipe.query(&mut conn).unwrap();
+        // combine vec_uid and result to HashMap HashMap<u32,Vec<u32>>
+        let mut map_uid_nbr: HashMap<u32,Vec<u32>> = HashMap::new();
+        for i in 0..vec_uid.len() {
+            map_uid_nbr.insert(*vec_uid.get(i).unwrap(), result.get(i).unwrap().to_vec());
+        }
+        map_uid_nbr
     }
 
-    pub fn empty(){
+    pub fn clear() {
         let mut db_conn = get_redis_conn().unwrap();
         let _: () = redis::cmd("FLUSHDB").query(&mut db_conn).unwrap();
-    }
-
-    // write BRANCH users at one time
-    pub fn add_as_bytes(sessions: &Vec<Session>) -> redis::RedisResult<()> {
-        let mut conn = get_redis_conn().unwrap();
-        // pipe sender to receivers
-        for sess in sessions {
-            let sender = sess.sender;
-            let receiver = sess.receiver;
-            let key: [u8;16] = from_vec_to_u8_array(decode(sess.id.clone()).unwrap());
-            redis::cmd("HSET").arg(sender).arg(receiver).arg(&key).query(&mut conn)?;
-            redis::cmd("HSET").arg(receiver).arg(sender).arg(&key).query(&mut conn)?;
-        }
-        Ok(())
-    }
-
-    pub fn query_sid_as_bytes(sender: &u32, receiver: &u32) -> String {
-        let mut conn = get_redis_conn().unwrap();
-        let mut key: [u8; 16] = Default::default();
-        let mut result: Vec<u8> = conn.hget(sender, receiver).unwrap();
-        key.copy_from_slice(&result);
-        encode(key)
-    }
-
-    pub fn pipe_add(sess:&mut Vec<Session>) -> redis::RedisResult<()> {
-        let mut conn = get_redis_conn().unwrap();
-        let mut pipe = redis::Pipeline::new();
-        let mut threshold = 100000;
-
-        while sess.len() > threshold {
-            let length = sess.len();
-            let store_sess = sess.split_off(length - threshold);
-            let _ = add(&store_sess);
-        }
-        add(sess)
-    }
-
-    pub fn query_sid(sender: &u32, receiver: &u32) -> String {
-        let mut conn = get_redis_conn().unwrap();
-        conn.hget(*sender, *receiver).unwrap()
-    }
-
-    pub fn pipe_query_sid(edges: &Vec<Edge>) -> Vec<String> {
-        let mut conn = get_redis_conn().unwrap();
-        let mut pipe = redis::Pipeline::new();
-        for sess in edges {
-            let command = redis::cmd("HGET").arg(sess.sender).arg(sess.receiver).to_owned();
-            pipe.add_command(command);
-        }
-        let result = pipe.query(&mut conn).unwrap();
-        result
-    }
-
-    pub fn query_users(uid: &u32, fwd_type: FwdType) -> Vec<Session> {    
-        let mut conn = get_redis_conn().unwrap();
-        let users: Vec<String> = conn.hgetall(*uid).unwrap();
-        // TODO: optimize
-        let mut sessions: Vec<Session> = Vec::new();
-        for i in 0..(users.len()/2) {
-            let sid = users.get(2*i+1).unwrap();
-            let sender: u32;
-            let receiver: u32;
-            
-            match fwd_type {
-                FwdType::Receive => {
-                    sender = users.get(2*i).unwrap().parse().unwrap();
-                    receiver = *uid;
-                }
-                FwdType::Send => {
-                    sender = *uid;
-                    receiver = users.get(2*i).unwrap().parse().unwrap();
-                }
-            }
-            sessions.push(Session::new(&sid, &sender, &receiver));
-        }
-        sessions
-    }
-
-    pub fn query_users_receive(uid: &u32) -> Vec<Session> {    
-        let mut conn = get_redis_conn().unwrap();
-        let users: Vec<String> = conn.hgetall(*uid).unwrap();
-        // TODO: optimize
-        let mut sessions: Vec<Session> = Vec::new();
-        for i in 0..(users.len()/2) {
-            let sid = users.get(2*i+1).unwrap();
-            let sender = users.get(2*i).unwrap().parse().unwrap();
-            let receiver= *uid;
-            sessions.push(Session::new(&sid, &sender, &receiver));
-        }
-        sessions
-    }
-// TODO: auto cut in 100000
-    pub fn pipe_query_users(uids: &Vec<u32>) -> Vec<Vec<Session>> {
-        let mut conn = get_redis_conn().unwrap();
-        let mut pipe = redis::Pipeline::new();
-
-        for uid in uids {
-            let command = redis::cmd("HGETALL").arg(uid).to_owned();
-            pipe.add_command(command);
-        }
-        let query_result: Vec<Vec<String>> = pipe.query(&mut conn).unwrap();
-
-        let mut result: Vec<Vec<Session>> = Vec::new();
-        for i in 0..query_result.len() {
-            let uid_key = query_result.get(i).unwrap();
-            let mut uid_result: Vec<Session> = Vec::new();
-            for j in 0..(uid_key.len()/2) {
-                let sid = uid_key.get(2*j+1).unwrap();
-                let sender: u32 = *uids.get(i).unwrap();
-                let receiver: u32 = uid_key.get(2*j).unwrap().parse().unwrap();
-                uid_result.push(Session::new(&sid, &sender, &receiver));
-            }
-            result.push(uid_result);
-        }
-        result
     }
 
 }
@@ -278,187 +205,147 @@ pub mod tests {
     extern crate redis;
     extern crate test;
 
-    use base64::{encode, decode};
+    use base64::encode;
     // extern crate test;
     use rand::random;
     use test::Bencher;
-    use redis::ConnectionLike;
-    use crate::db::{bloom_filter, redis_pack};
-    use crate::message::messaging::{Session, FwdType, Edge};
-    use std::time::{SystemTime, Duration, UNIX_EPOCH};
+    use crate::db::{db_tag, db_nbr, db_ik};
+    use crate::message::messaging::{Edge, IdKey};
 
     // fn init_logger() {
     //     //env_logger::init();
     //     let _ = env_logger::builder().is_test(true).try_init();
     // }
 
-    // utils test
-    #[test]
-    fn bf_is_open() {
-        let con = bloom_filter::get_bf_conn().ok().unwrap();
-        // 测试是否成功连接Reids
-        assert!(con.is_open());
-    }
-
     #[test]
     fn redis_is_open() {
-        assert!(redis_pack::get_redis_conn().is_ok());
+        assert!(db_nbr::get_redis_conn().is_ok());
     }
 
     #[test]
     fn bf_add_exists() {
-        let bytes = random::<[u8; 6]>();
-        let bytes_2 = random::<[u8; 6]>();
+        let bytes = random::<[u8; 32]>();
+        let bytes_2 = random::<[u8; 32]>();
         
-        assert!(bloom_filter::add(&bytes).is_ok());
-        assert!(bloom_filter::exists(&bytes));
-        assert_eq!(bloom_filter::exists(&bytes_2), false);
+        assert!(db_tag::add(&vec![encode(bytes)]).is_ok());
+        assert!(db_tag::exists(&encode(bytes)));
+        assert_eq!(db_tag::exists(&encode(bytes_2)), false);
     }
 
     #[test]
     fn bf_madd_mexists() {
         let mut values: Vec<String> = Vec::new();
-        for i in 0..5 {
-            let bytes = rand::random::<[u8; 32]>();
-            let key = encode(&bytes[..]);
-            values.push(key);
+        for _i in 0..5 {
+            values.push(encode(rand::random::<[u8; 32]>()));
         }
-        assert!(bloom_filter::madd(&values).is_ok());
-        bloom_filter::mexists(&mut values);
-    }
-
-
-    #[test]
-    fn redis_add_query() {
-        let sender = random::<u32>();
-        let receiver = random::<u32>();
-        let bytes = rand::random::<[u8; 16]>();
-        let sid = encode(&bytes[..]);
-        let ses = Session::new(&sid, &sender, &receiver);
-
-        redis_pack::pipe_add(&mut vec![ses]).ok().unwrap();
-        let mut users = redis_pack::query_users(&sender, FwdType::Send);
-        for u in &mut users {
-            assert_eq!(receiver, u.receiver);
-        }
+        assert!(db_tag::add(&values).is_ok());
+        db_tag::mexists(&mut values);
     }
 
     #[test]
-    fn test_bf_pipe_mexists() {
-        let mut pack_val: Vec<Vec<String>> = Vec::new();
-        for j in 0..3 {
-            let mut values: Vec<String> = Vec::new();
-            for i in 0..3 {
-                let bytes = rand::random::<[u8; 32]>();
-                let key = encode(&bytes[..]);
-                values.push(key);
+    fn bf_collision_test() {
+        let mut input: Vec<String> = Vec::new();
+        for _i in 0..10000 {
+            input.push(encode(rand::random::<[u8; 32]>()));
+        }
+        let _ = db_tag::add(&input);
+        let mut q_values: Vec<String> = Vec::new();
+        for _i in 0..1000 {
+            q_values.push(encode(rand::random::<[u8; 32]>()));
+        }
+        for s in q_values.clone() {
+            assert!(!input.contains(&s));
+        }
+        // check true positive
+        let result = db_tag::mexists(&mut input);
+        for i in 0..result.len() {
+            if !(*result.get(i).unwrap()) {
+                println!("True nagative: {}", input.get(i).unwrap());
             }
-            assert!(bloom_filter::madd(&values).is_ok());
-            pack_val.push(values);
         }
-
-        pack_val.push(vec![12.to_string(), 15.to_string(), 13.to_string()]);
-        
-        let result = bloom_filter::mexists_pack(&pack_val);
-println!("{:?}", result);
-    }
-
-    #[bench]
-    fn bf_pipe_mexists(b: &mut Bencher) {
-        let mut pack_val: Vec<Vec<String>> = Vec::new();
-        for j in 0..3 {
-            let mut values: Vec<String> = Vec::new();
-            for i in 0..3 {
-                let bytes = rand::random::<[u8; 32]>();
-                let key = encode(&bytes[..]);
-                values.push(key);
+        // check false positive
+        let result = db_tag::mexists(&mut q_values);
+        for i in 0..result.len() {
+            if *result.get(i).unwrap() {
+                println!("False positive: {}", q_values.get(i).unwrap());
             }
-            assert!(bloom_filter::madd(&values).is_ok());
-            pack_val.push(values);
         }
-        
-        b.iter(|| bloom_filter::mexists_pack(&pack_val));
+        db_tag::clear();
     }
-    
+
     #[test]
-    fn test_redis_pipe_query_sid() {
-        let sender = random::<u32>();
-        let receiver = random::<u32>();
-        let bytes = rand::random::<[u8; 16]>();
-        let sid = encode(&bytes[..]);
-        let ses = Session::new(&sid, &sender, &receiver);
-
-        redis_pack::pipe_add(&mut vec![ses]).ok().unwrap();
-        let result = redis_pack::pipe_query_sid(&vec!(Edge::new(sender, receiver)));
-        for res in result {
-            assert_eq!(sid, res);
+    fn db_ik_add_query() {
+        let mut vec_id_key = Vec::new();
+        for _i in 0..1000 {
+            let id_key = IdKey::rand_key_gen(random::<u32>());
+            vec_id_key.push(id_key);
         }
+        db_ik::add(&vec_id_key).ok();
+        let map_id_key = db_ik::query(&vec_id_key.iter().map(|x| x.id).collect());
+        for i in 0..vec_id_key.len() {
+            let uid = vec_id_key.get(i).unwrap().id;
+            let ukey = vec_id_key.get(i).unwrap().key;
+            assert_eq!(*map_id_key.get(&uid).unwrap(), ukey);
+        }
+        db_ik::clear();
     }
 
-    #[bench]
-    fn bench_bloom_filter_exist(b: &mut Bencher) {
+    #[test]
+    fn db_nbr_add_query() {
+        let mut vec_sess = Vec::<Edge>::new();
+        for _i in 0..1000 {
+            vec_sess.push(Edge { sid: random::<u32>(), rid: random::<u32>() })
+        }
+        db_nbr::add(&mut vec_sess).ok().unwrap();
+        let _ = db_nbr::query(&vec_sess.iter().map(|x| x.sid).collect());
+        db_nbr::clear();
+    }
+
+    #[test]
+    fn bench_db_tag_exist() {
         let bytes = random::<[u8; 6]>();
-        assert!(bloom_filter::add(&bytes).is_ok());
-        b.iter(|| bloom_filter::exists(&bytes));
+        let data = vec![encode(bytes)];
+        assert!(db_tag::add(&data).is_ok());
+        let start = std::time::Instant::now();
+        db_tag::exists(&encode(bytes));
+        let end = std::time::Instant::now();
+        println!("db_tag exist runtime: {:?}", end - start);
+    }
+
+    #[test]
+    fn bench_db_ik_query() {
+        let id = random::<u32>();
+        let id_key = IdKey::rand_key_gen(id);
+        db_ik::add(&vec![id_key]).ok();
+    let start = std::time::Instant::now();
+        // b.iter(|| db_ik::query(&vec![id]));
+        db_ik::query(&vec![id]);
+    let end = std::time::Instant::now();
+    println!("Query runtime: {:?}", end - start);
+    }
+
+    #[test]
+    fn bench_bloom_filter_add() {
+        let bytes = random::<[u8; 6]>();
+        let data = vec![encode(bytes)];
+        let start = std::time::Instant::now();
+        let _ = db_tag::add(&data).is_ok();
+        let end = std::time::Instant::now();
+        println!("Query runtime: {:?}", end - start);
     }
 
     #[bench]
     fn bench_bloom_filter_mexists(b: &mut Bencher) {
         let mut tags: Vec<String> = Vec::new();
-        for i in 0..1 {
-            let bytes: [u8; 6] = random::<[u8; 6]>();
+        for _i in 0..1 {
+            let bytes: [u8; 32] = random::<[u8; 32]>();
             let tag: String = encode(&bytes[..]).clone();
-            assert!(bloom_filter::add(&bytes).is_ok());
+            assert!(db_tag::add(&vec![encode(bytes)]).is_ok());
             tags.push(tag);
         }
 
-        b.iter(|| bloom_filter::mexists(&mut tags));
+        b.iter(|| db_tag::mexists(&mut tags));
     }
 
-    #[bench]
-    fn bench_redis_query(b: &mut Bencher) {
-        let sender = random::<u32>();
-        let receiver = random::<u32>();
-        let bytes = rand::random::<[u8; 16]>();
-        let sid = encode(&bytes[..]);
-        let ses = Session::new(&sid, &sender, &receiver);
-
-        redis_pack::pipe_add(&mut vec![ses]).ok().unwrap();
-
-        b.iter(|| redis_pack::query_users(&sender, FwdType::Send));
-
-        let mut db_conn = redis_pack::get_redis_conn().unwrap();
-        let _: () = redis::cmd("FLUSHDB").query(&mut db_conn).unwrap();
-    }
-
-    #[bench]
-    fn bench_redis_query_sid(b: &mut Bencher) {
-        let sender = random::<u32>();
-        let receiver = random::<u32>();
-        let bytes = rand::random::<[u8; 16]>();
-        let sid = encode(&bytes[..]);
-        let ses = Session::new(&sid, &sender, &receiver);
-
-        redis_pack::pipe_add(&mut vec![ses]).ok().unwrap();
-        b.iter(|| redis_pack::query_sid(&sender, &receiver));
-    }
-
-    #[test]
-    fn bench_redis_query_sid_as_bytes() {
-        let sender = random::<u32>();
-        let receiver = random::<u32>();
-        let bytes = rand::random::<[u8; 16]>();
-        let sid = encode(&bytes[..]);
-        let ses = Session::new(&sid, &sender, &receiver);
-
-        redis_pack::add(&mut vec![ses]).ok().unwrap();
-
-        let trace_start = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
-        println!("Set {}, get {}", sid, redis_pack::query_sid_as_bytes(&sender, &receiver));
-        let trace_end = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
-        println!("Query runtime: {:?}", trace_end - trace_start);
-
-        redis_pack::empty();
-    }
 
 }
