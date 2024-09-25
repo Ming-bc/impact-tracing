@@ -8,8 +8,7 @@ pub mod db_tag {
     use redis::Connection;
     use dotenv::dotenv;
     use std::env;
-    // const DB_TAG_IP: &str = "redis://localhost:6402/";
-    const SET_NAME: &str = "tags";
+    const SET_NAME: &str = "filter";
 
     lazy_static::lazy_static! {
         pub static ref SET: redis::Client = create_redis_set_client();
@@ -220,6 +219,8 @@ pub mod tests {
     #[test]
     fn redis_is_open() {
         assert!(db_nbr::get_redis_conn().is_ok());
+        assert!(db_ik::get_redis_conn().is_ok());
+        assert!(db_tag::get_set_conn().is_ok());
     }
 
     #[test]
