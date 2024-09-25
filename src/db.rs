@@ -8,7 +8,6 @@ pub mod db_tag {
     use redis::Connection;
     use dotenv::dotenv;
     use std::env;
-    const SET_NAME: &str = "filter";
 
     lazy_static::lazy_static! {
         pub static ref SET: redis::Client = create_redis_set_client();
@@ -26,42 +25,46 @@ pub mod db_tag {
 
     pub fn add(tags: &Vec<String>) -> redis::RedisResult<()> {
         let mut conn = get_set_conn().unwrap();
-        redis::cmd("SADD").arg(SET_NAME).arg(tags).query(&mut conn)
+        let set_name: String = env::var("DB_TAG_SET_NAME").expect("DB_TAG_SET_NAME is undefined.");
+        redis::cmd("BF.MADD").arg(set_name).arg(tags).query(&mut conn)
     }
 
     pub fn exists(tag: &String) -> bool {
         let mut conn = get_set_conn().unwrap();
-        redis::cmd("SISMEMBER").arg(SET_NAME).arg(tag).query(&mut conn).unwrap()
+        let set_name: String = env::var("DB_TAG_SET_NAME").expect("DB_TAG_SET_NAME is undefined.");
+        redis::cmd("BF.EXISTS").arg(set_name).arg(tag).query(&mut conn).unwrap()
     }
 
     pub fn mexists(tags: &Vec<String>) -> Vec<bool> {
         let mut conn = get_set_conn().unwrap();
+        let set_name: String = env::var("DB_TAG_SET_NAME").expect("DB_TAG_SET_NAME is undefined.");
         if tags.len() == 0 {
             panic!("keys.len() == 0");
         }
-        let result: Vec<bool> = redis::cmd("SMISMEMBER").arg(SET_NAME).arg(tags).query(&mut conn).unwrap();
+        let result: Vec<bool> = redis::cmd("BF.MEXISTS").arg(set_name).arg(tags).query(&mut conn).unwrap();
         result
     }
 
     pub fn mexists_pack(pack_keys: &Vec<Vec<String>>) -> Vec<Vec<bool>> {
         let mut conn = get_set_conn().unwrap();
+        let set_name: String = env::var("DB_TAG_SET_NAME").expect("DB_TAG_SET_NAME is undefined.");
         let mut pipe = redis::pipe();
 
         for keys in pack_keys {
             if keys.len() == 0 {
                 panic!("keys.len() == 0");
             }
-            let command = redis::cmd("SMISMEMBER").arg(SET_NAME).arg(keys.to_owned()).to_owned();
+            let command = redis::cmd("BF.MEXISTS").arg(set_name.clone()).arg(keys.to_owned()).to_owned();
             pipe.add_command(command);
         }
         let result: Vec<Vec<bool>> = pipe.query(&mut conn).unwrap();
         result
     }
 
-    pub fn clear() {
-        let mut db_conn = get_set_conn().unwrap();
-        let _: () = redis::cmd("FLUSHDB").query(&mut db_conn).unwrap();
-    }
+    // pub fn clear() {
+    //     let mut db_conn = get_set_conn().unwrap();
+    //     let _: () = redis::cmd("FLUSHDB").query(&mut db_conn).unwrap();
+    // }
 }
 
 pub mod db_ik {
@@ -250,12 +253,12 @@ pub mod tests {
             input.push(encode(rand::random::<[u8; 32]>()));
         }
         let _ = db_tag::add(&input);
-        let mut q_values: Vec<String> = Vec::new();
+        let mut query: Vec<String> = Vec::new();
         for _i in 0..1000 {
-            q_values.push(encode(rand::random::<[u8; 32]>()));
-        }
-        for s in q_values.clone() {
-            assert!(!input.contains(&s));
+            let q = encode(rand::random::<[u8; 32]>());
+            if !input.contains(&q) {
+                query.push(q);
+            }
         }
         // check true positive
         let result = db_tag::mexists(&mut input);
@@ -265,13 +268,12 @@ pub mod tests {
             }
         }
         // check false positive
-        let result = db_tag::mexists(&mut q_values);
+        let result = db_tag::mexists(&mut query);
         for i in 0..result.len() {
             if *result.get(i).unwrap() {
-                println!("False positive: {}", q_values.get(i).unwrap());
+                println!("False positive: {}", query.get(i).unwrap());
             }
         }
-        db_tag::clear();
     }
 
     #[test]

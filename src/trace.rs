@@ -319,7 +319,7 @@ pub mod tests {
     fn db_clear() {
         db_nbr::clear();
         db_ik::clear();
-        db_tag::clear();
+        // db_tag::clear();
     }
 
     #[test]

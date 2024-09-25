@@ -25,7 +25,6 @@ pub mod rwc_eval {
             let (fwd_degree, fuzz_degree) =  (degree_analysis(&fwd_graph, &sys_graph), degree_analysis(&fuzz_graph, &sys_graph));
 
             // 3. mock sends for fuzz_edges
-            let trace_st_node: u32 = fuzzy_traceback::any_leaf(&fwd_graph) as u32;
             let message = "message".to_string() + &i.to_string();
             let root: u32 = 719;
 
@@ -169,7 +168,7 @@ mod tests {
     fn db_clear() {
         db_nbr::clear();
         db_ik::clear();
-        db_tag::clear();
+        // db_tag::clear();
     }
 
     #[test]
@@ -177,12 +176,12 @@ mod tests {
         let sys_graph = import_graph("./graphs/message.txt".to_string());
         // let sys_graph = import_graph("./graphs/email.txt".to_string());
         // s2i: 0.05, i2r: 0.4-0.9; s2i: 0.03-0.08, i2r: 0.7;
-        let s2i_list = vec![0.05];
+        // let s2i_list = vec![0.05];
         // let i2r_list = vec![0.4, 0.5, 0.6, 0.7, 0.8, 0.9];
-        // let s2i_list = vec![0.03, 0.04, 0.05, 0.06, 0.07, 0.08];
-        let i2r_list = vec![0.6];
-        let trace_fpr: f32 = 0.05;
-        let loop_index = 4;
+        let s2i_list = vec![0.03, 0.04, 0.05, 0.06, 0.07, 0.08];
+        let i2r_list = vec![0.7];
+        let trace_fpr: f32 = 0.01;
+        let loop_index = 1;
 
         let mut count = 0;
         for s2i in s2i_list {
@@ -192,8 +191,8 @@ mod tests {
                 let record = eval_fuzz_trace_runtime(&trace_fpr, &s2i, i2r, &loop_index, &sys_graph, &output_dir);
                 println!("\nS-I-R: {}-{}; Fwd-Fuzz: ({}:{}:{})-({}:{}:{}); Runtime: {}", s2i, i2r, record[0], record[1], record[2], record[3], record[4], record[5], record[6]);
                 count += 1;
-                db_clear();
             }
         }
+        db_clear();
     }
 }
