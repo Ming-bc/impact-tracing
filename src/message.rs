@@ -159,8 +159,6 @@ mod tests {
     use aes_gcm::{Aes128Gcm, KeyInit};
     use base64::{encode, decode};
     use test::Bencher;
-    use vrf::VRF;
-    use vrf::openssl::{ECVRF, CipherSuite};
     use crate::db::{db_tag, db_nbr, db_ik};
     use crate::message::messaging::*;
     use crate::tool::algos::*;
@@ -258,18 +256,5 @@ mod tests {
         let nounce = Aes128Gcm::generate_nonce(&mut OsRng);
         let ciphertext = cipher.encrypt(&nounce, b"plaintext".as_ref()).unwrap();
         b.iter(|| cipher.decrypt(&nounce, ciphertext.as_ref()).unwrap());
-    }
-
-    #[bench]
-    fn bench_receive_tag(b: &mut Bencher) {
-        let mut vrf = ECVRF::from_suite(CipherSuite::P256_SHA256_TAI).unwrap();
-        let message = rand::random::<[u8; 16]>().to_vec();
-        let tk = rand::random::<[u8; 16]>();
-        let secret_key = &tk[..].to_vec();
-        let public_key = vrf.derive_public_key(&secret_key).unwrap();
-        let proof = vrf.prove(&secret_key, &message).unwrap();
-
-        b.iter(|| vrf.verify(&public_key, &proof, &message).unwrap());
-        // b.iter(|| vrf.prove(&secret_key, &message));
     }
 }

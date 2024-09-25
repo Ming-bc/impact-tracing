@@ -7,4 +7,3 @@ for ((i=1; i<=10; i++))
         cargo test test_fuzz_ours
         python3 ../../Traceability-Evaluation/src/comp_ks.py
     done
-

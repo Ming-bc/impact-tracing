@@ -118,8 +118,6 @@ pub mod algos{
     use base64::encode;
     use crate::tool::utils::{hash, crprf, encipher, decipher};
     use crate::db::db_tag;
-    use vrf::openssl::{CipherSuite, ECVRF};
-    use vrf::VRF;
 
     use super::utils::hash_array_32;
 
@@ -179,7 +177,7 @@ pub mod algos{
         db_tag::exists(&encode(&tag[..]))
     }
 
-    pub fn m_tag_exists(tags: &Vec<[u8; 6]>) -> Vec<bool> {
+    pub fn tag_mexists(tags: &Vec<[u8; 6]>) -> Vec<bool> {
         let mut tag_str: Vec<String> = Vec::new();
         for bytes in tags {
             let bytes_to_str = encode(&bytes[..]);
@@ -198,8 +196,6 @@ mod tests {
     use crate::tool::algos::{self, proc_tag_gen, prf_gen};
     use base64::encode;
     use test::Bencher;
-    use vrf::openssl::{CipherSuite, ECVRF};
-    use vrf::VRF;
     use std::time::{SystemTime, UNIX_EPOCH, Instant};
 
     use super::utils::{self, encryption};

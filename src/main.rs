@@ -6,7 +6,7 @@ mod message;
 mod trace;
 // mod visualize;
 mod simulation;
-// mod analysis;
+mod analysis;
 mod rwc_eval;
 
 fn main() {

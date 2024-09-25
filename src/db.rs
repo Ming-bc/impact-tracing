@@ -60,11 +60,12 @@ pub mod db_tag {
         let result: Vec<Vec<bool>> = pipe.query(&mut conn).unwrap();
         result
     }
-
-    // pub fn clear() {
-    //     let mut db_conn = get_set_conn().unwrap();
-    //     let _: () = redis::cmd("FLUSHDB").query(&mut db_conn).unwrap();
-    // }
+    pub fn clear() {
+        let mut db_conn = get_set_conn().unwrap();
+        let set_name: String = env::var("DB_TAG_SET_NAME").expect("DB_TAG_SET_NAME is undefined.");
+        let _: () = redis::cmd("FLUSHDB").query(&mut db_conn).unwrap();
+        let _: () = redis::cmd("BF.RESERVE").arg(set_name).arg(0.00001).arg(1000000).query(&mut db_conn).unwrap();
+    }
 }
 
 pub mod db_ik {

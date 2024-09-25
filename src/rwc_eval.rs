@@ -168,7 +168,7 @@ mod tests {
     fn db_clear() {
         db_nbr::clear();
         db_ik::clear();
-        // db_tag::clear();
+        db_tag::clear();
     }
 
     #[test]
@@ -176,12 +176,12 @@ mod tests {
         let sys_graph = import_graph("./graphs/message.txt".to_string());
         // let sys_graph = import_graph("./graphs/email.txt".to_string());
         // s2i: 0.05, i2r: 0.4-0.9; s2i: 0.03-0.08, i2r: 0.7;
-        // let s2i_list = vec![0.05];
-        // let i2r_list = vec![0.4, 0.5, 0.6, 0.7, 0.8, 0.9];
-        let s2i_list = vec![0.03, 0.04, 0.05, 0.06, 0.07, 0.08];
-        let i2r_list = vec![0.7];
+        let s2i_list = vec![0.05];
+        let i2r_list = vec![0.4, 0.5, 0.6, 0.7, 0.8, 0.9];
+        // let s2i_list = vec![0.03, 0.04, 0.05, 0.06, 0.07, 0.08];
+        // let i2r_list = vec![0.7];
         let trace_fpr: f32 = 0.01;
-        let loop_index = 1;
+        let loop_index = 5;
 
         let mut count = 0;
         for s2i in s2i_list {
