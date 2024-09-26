@@ -166,6 +166,8 @@ mod tests {
         aead::{Aead, AeadCore, OsRng},
         Aes256Gcm, Nonce, Key // Or `Aes128Gcm`
     };
+    use double_ratchet_2::ratchet::Ratchet;
+    use serde;
 
     // fn init_logger() {
     //     //env_logger::init();
@@ -178,7 +180,7 @@ mod tests {
         let message = rand::random::<[u8; 16]>();
         let prev_key = rand::random::<[u8; 16]>();
         
-        let mut packet = send_packet(&encode(message), &prev_key, &tk);
+        let packet = send_packet(&encode(message), &prev_key, &tk);
         assert!(receive_packet(&packet));
     }
 
@@ -191,18 +193,45 @@ mod tests {
     }
 
     #[bench]
+    fn bench_send_message_e2e(b: &mut Bencher) {
+        let tk = rand::random::<[u8; 16]>();
+        let mut message = encode(rand::random::<[u8; 16]>());
+        for _i in 0..63 {
+            message.push_str(&encode(rand::random::<[u8; 16]>()));
+        }
+        let prev_key = rand::random::<[u8; 16]>();
+        let enc_pkt = send_packet(&message, &prev_key, &tk);
+
+        let sk = [1; 32];
+        let (mut bob_ratchet, public_key) = Ratchet::init_bob(sk);
+        let mut alice_ratchet = Ratchet::init_alice(sk, public_key);
+        let enc_string: String = serde_json::to_string(&enc_pkt).unwrap();
+        b.iter(|| test::black_box(alice_ratchet.ratchet_encrypt(&enc_string.as_bytes().to_vec(), b"none")));
+
+        // let (header, encrypted, nonce) = alice_ratchet.ratchet_encrypt(&enc_string.as_bytes().to_vec(), b"none");
+        // let decrypted = bob_ratchet.ratchet_decrypt(&header, &encrypted, &nonce, b"none");
+        // // deserialize decrypted to pkt
+        // let dec_string = String::from_utf8(decrypted).unwrap();
+        // let _: MsgPacket = serde_json::from_str(&dec_string).unwrap();
+        // assert_eq!(enc_string, dec_string);
+    }
+
+    #[bench]
     fn bench_send_message(b: &mut Bencher) {
         let tk = rand::random::<[u8; 16]>();
-        let message = rand::random::<[u8; 16]>();
+        let mut message = encode(rand::random::<[u8; 16]>());
+        for _i in 0..63 {
+            message.push_str(&encode(rand::random::<[u8; 16]>()));
+        }
         let prev_key = rand::random::<[u8; 16]>();
-        b.iter(|| send_packet(&encode(message), &prev_key, &tk));
+        b.iter(|| send_packet(&message, &prev_key, &tk));
     }
 
     #[bench]
     fn bench_receive_message(b: &mut Bencher) {
         let message = rand::random::<[u8; 16]>();
         let tk = rand::random::<[u8; 16]>();
-        let mut packet = send_packet(&encode(message),&[0;16], &tk);
+        let packet = send_packet(&encode(message),&[0;16], &tk);
 
         b.iter(|| receive_packet(&packet));
     }
