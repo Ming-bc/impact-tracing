@@ -1,4 +1,4 @@
-#![allow(dead_code)]
+#![allow(dead_code,unused_imports)]
 
 pub mod messaging {
     extern crate base64;
@@ -203,7 +203,7 @@ mod tests {
         let enc_pkt = send_packet(&message, &prev_key, &tk);
 
         let sk = [1; 32];
-        let (mut bob_ratchet, public_key) = Ratchet::init_bob(sk);
+        let (_, public_key) = Ratchet::init_bob(sk);
         let mut alice_ratchet = Ratchet::init_alice(sk, public_key);
         let enc_string: String = serde_json::to_string(&enc_pkt).unwrap();
         b.iter(|| test::black_box(alice_ratchet.ratchet_encrypt(&enc_string.as_bytes().to_vec(), b"none")));

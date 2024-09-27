@@ -1,4 +1,4 @@
-#![allow(dead_code)]
+#![allow(dead_code,unused_imports)]
 
 pub mod traceback {
     extern crate base64;
@@ -102,7 +102,7 @@ pub mod traceback {
                 let tk = algos::tk_gen(&map_id_ik.get(&nbr_id).unwrap(), &md.uid);
                 let prev_key = algos::prev_key(&md.key, &tk);
                 source = TraceData::new(*nbr_id, prev_key);
-                // TODO: this break can cause bug when the first user is the source.
+                // TODO: this break may cause bug when the first user is the source.
                 break;
             }
         }
@@ -112,10 +112,7 @@ pub mod traceback {
     pub fn par_forward_search(input_msg: &String, md: &Vec<TraceData>) -> Vec<Vec<TraceData>> {
         let mut result: Vec<Vec<TraceData>> = Vec::new();
         let users: Vec<u32> = md.into_iter().map(|data| data.uid).collect();
-// let q_nbr = Instant::now();
         let (vec_vec_nbrs, map_id_ik) = db_query_nbrs(&users);
-// print!("Query nbrs: {:?}, ", q_nbr.elapsed());
-// let q_compute_tag = Instant::now();
         let mut pack_tags_tbt: Vec<Vec<String>> = Vec::new();
         let mut pack_next_key_set: Vec<Vec<[u8; 16]>> = Vec::new();
         for i in 0..vec_vec_nbrs.len() {
@@ -157,10 +154,7 @@ pub mod traceback {
             pack_tags_tbt.push(tags_tbt);
             pack_next_key_set.push(next_key_set);
         }
-// print!("Compute tags: {:?}, ", q_compute_tag.elapsed());
-// let q_tag = Instant::now();
         let vec_resp: Vec<Vec<bool>> = db_tag::mexists_pack(&pack_tags_tbt);
-// println!("Query tags: {:?}.", q_tag.elapsed());
         for i in 0..vec_resp.len() {
             let next_key_set = pack_next_key_set.get(i).unwrap();
             let response = vec_resp.get(i).unwrap();
@@ -257,6 +251,51 @@ pub mod tests {
     
     const OURS_BRANCH: u32 = 10;
 
+    #[test]
+    fn test_tracing() {
+        // Path case 2: 1-2-3-4-5, 3-6-7, 6-8
+        let (users, keys, message) = create_path_case();
+        let start_index: usize = 1;
+        let report_key = keys.get(start_index).unwrap();
+
+        // Search this message from middle node
+        let fwd_graph = traceback::tracing(&MsgReport {key: *report_key, payload: message}, users.get(start_index + 1).unwrap());
+        assert_eq!(fwd_graph.is_empty(), false);
+
+        fwd_graph.into_iter().for_each(|e| {
+            println!("{} -> {}", e.sid, e.rid);
+        });
+        // display::vec_to_dot(refined_users, refined_path);
+        db_clear();
+    }
+    
+    #[test]
+    fn trace_tree () {
+        let branch: u32 = 3;
+        let depth: u32 = 8;
+        let tree_size = calc_tree_size(&depth, &branch);
+        let vec_user = (0..tree_size + 1).collect::<Vec<u32>>();
+        let map_id_ik = register_users(&vec_user);
+
+        let origin_id = vec_user.get(tree_size as usize).unwrap();
+        let root_id = vec_user.get(0).unwrap();
+        let first_packet = new_edge_gen(&"message".to_string(), origin_id, &root_id);
+        let mut vec_tag = Vec::<String>::new();
+        let mut vec_edge = Vec::<Edge>::new();
+
+        mock_tree_recursive(&root_id, &first_packet, &branch, &1, &depth, &"message".to_string(), &map_id_ik, &mut vec_tag, &mut vec_edge);
+        let _ = db_tag::add(&vec_tag);
+        let _ = db_nbr::add(&vec_edge);
+
+        let path =  traceback::tracing(&MsgReport {key: first_packet.tag_key, payload: "message".to_string()}, &root_id);
+
+        // println!("Path-Tree: {}-{}", path.len(), tree_size - 1);
+
+        assert_eq!(tree_size -1, path.len() as u32);
+
+        db_clear();
+    }
+
     fn register_users (vec_uid: &Vec<u32>) -> HashMap<u32, [u8; 16]> {
         let mut vec_id_key = Vec::<IdKey>::new();
         for uid in vec_uid {
@@ -298,55 +337,10 @@ pub mod tests {
         (users, keys_1, message)
     }
 
-    #[test]
-    fn test_tracing() {
-        // Path case 2: 1-2-3-4-5, 3-6-7, 6-8
-        let (users, keys, message) = create_path_case();
-        let start_index: usize = 1;
-        let report_key = keys.get(start_index).unwrap();
-
-        // Search this message from middle node
-        let fwd_graph = traceback::tracing(&MsgReport {key: *report_key, payload: message}, users.get(start_index + 1).unwrap());
-        assert_eq!(fwd_graph.is_empty(), false);
-
-        fwd_graph.into_iter().for_each(|e| {
-            println!("{} -> {}", e.sid, e.rid);
-        });
-        // display::vec_to_dot(refined_users, refined_path);
-        db_clear();
-    }
-
     fn db_clear() {
         db_nbr::clear();
         db_ik::clear();
-        // db_tag::clear();
-    }
-
-    #[test]
-    fn trace_tree () {
-        let branch: u32 = 3;
-        let depth: u32 = 8;
-        let tree_size = calc_tree_size(&depth, &branch);
-        let vec_user = (0..tree_size + 1).collect::<Vec<u32>>();
-        let map_id_ik = register_users(&vec_user);
-
-        let origin_id = vec_user.get(tree_size as usize).unwrap();
-        let root_id = vec_user.get(0).unwrap();
-        let first_packet = new_edge_gen(&"message".to_string(), origin_id, &root_id);
-        let mut vec_tag = Vec::<String>::new();
-        let mut vec_edge = Vec::<Edge>::new();
-
-        mock_tree_recursive(&root_id, &first_packet, &branch, &1, &depth, &"message".to_string(), &map_id_ik, &mut vec_tag, &mut vec_edge);
-        let _ = db_tag::add(&vec_tag);
-        let _ = db_nbr::add(&vec_edge);
-
-        let path =  traceback::tracing(&MsgReport {key: first_packet.tag_key, payload: "message".to_string()}, &root_id);
-
-        // println!("Path-Tree: {}-{}", path.len(), tree_size - 1);
-
-        assert_eq!(tree_size -1, path.len() as u32);
-
-        db_clear();
+        db_tag::clear();
     }
 
     fn mock_tree_recursive(root: &u32, prev_packet: &MsgPacket, branch: &u32, curr_depth: &u32, depth: &u32, message: &String, map_id_ik: &HashMap<u32, [u8;16]>, vec_tag: &mut Vec<String>, vec_edge: &mut Vec<Edge>) {

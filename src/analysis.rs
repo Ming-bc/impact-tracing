@@ -1,4 +1,4 @@
-#![allow(dead_code)]
+#![allow(dead_code,unused_imports)]
 
 mod utils {
     use std::{io::Write, fs::File};
@@ -184,9 +184,9 @@ mod tests {
         let range_list = vec![0.0, 80.0, 90.0, 95.0, 99.0, 99.5, 99.9, 99.99, 100.0];
         let val_list = import_csv(&"../Traceability-Evaluation/inputs/fuz_val_and_inf.csv".to_string());
 
-        write_val_vec_to_file(&inf_dist(&val_list), &"./output/inf_dist/k_shell.txt".to_string());
-        write_val_vec_to_file(&traceability(&val_list, &thd_list), &"./output/thd_fpr_fix_step/thd_fpr.txt".to_string());
-        write_val_vec_to_file(&correctness(&val_list, &thd_list), &"./output/inf_detect/inf_detect.txt".to_string());
-        write_val_vec_to_file(&privacy(&val_list, &range_list), &"./output/fuz_fpr/fuz_fpr.txt".to_string());
+        write_val_vec_to_file(&inf_dist(&val_list), &"output/inf_dist/k_shell.txt".to_string());
+        write_val_vec_to_file(&traceability(&val_list, &thd_list), &"output/thd_fpr_fix_step/thd_fpr.txt".to_string());
+        write_val_vec_to_file(&correctness(&val_list, &thd_list), &"output/inf_detect/inf_detect.txt".to_string());
+        write_val_vec_to_file(&privacy(&val_list, &range_list), &"output/fuz_fpr/fuz_fpr.txt".to_string());
     }
 }

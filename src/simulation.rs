@@ -1,4 +1,4 @@
-#![allow(dead_code)]
+#![allow(dead_code,unused_imports)]
 
 pub mod utils {
     extern crate petgraph;
@@ -200,7 +200,7 @@ pub mod sir {
         Recovered,
     }
 
-    pub fn sir_spread(round: &usize, s2i: &f32, i2r: &f32, sys_graph: &UnGraph::<usize, ()>) -> (Vec::<(usize,usize)>, HashMap::<usize,usize>) {
+    pub fn sir_spread(round: &usize, st_node: &usize, s2i: &f32, i2r: &f32, sys_graph: &UnGraph::<usize, ()>) -> (Vec::<(usize,usize)>, HashMap::<usize,usize>) {
         // initialization
         let mut nodes_state = HashMap::<NodeIndex, Condition>::new();
         let mut edges_state = Vec::<(usize,usize)>::new();
@@ -208,9 +208,7 @@ pub mod sir {
         for n in sys_graph.node_references() {
             nodes_state.insert(n.0, Condition::Susceptible);
         }
-        // set start node
-        // TODO: CollegeIM: 719; Enron: 1
-        let start_index = NodeIndex::new(719);
+        let start_index = NodeIndex::new(*st_node);
         if let Some(x) = nodes_state.get_mut(&start_index) {
             *x = Condition::Infective;
         }
@@ -677,6 +675,8 @@ pub mod fuzzy_traceback {
 mod tests {
     extern crate test;
     use std::{collections::HashMap, fmt::write};
+    use crate::db;
+    use crate::rwc_eval::rwc_eval;
 
     use crate::simulation::{sir, fuzzy_traceback::{fuzz_bfs, self, degree_analysis, fuzzy_trace_ours, calc_fuz_val}, utils::{import_graph, graph_to_dot, fuz_val_to_graph, write_val_to_file, hmap_to_graph, vec_to_graph, gen_raw_data_file, graph_to_dot_for_draw, derive_graph_id_wt_map}};
 
@@ -698,10 +698,10 @@ mod tests {
 
     #[test]
     fn test_sir_spread() {
-        let dir = "./graphs/email.txt";
-        let sys_graph = import_graph(dir.to_string());
+        let (file_dir, st_node) = rwc_eval::select_dataset(&rwc_eval::Dataset::CollegeIM);
+        let sys_graph = import_graph(file_dir);
         println!("{:?}, {:?}", sys_graph.node_count(), sys_graph.edge_count());
-        let (infected_edges, _) = sir::sir_spread(&10, &0.04, &0.6, &sys_graph.clone());
+        let (infected_edges, _) = sir::sir_spread(&10, &st_node, &0.04, &0.6, &sys_graph.clone());
         let (fwd_graph, _) = vec_to_graph(&infected_edges);
         println!("{:?}, {:?}", fwd_graph.node_count(), fwd_graph.edge_count());
 
@@ -710,8 +710,9 @@ mod tests {
 
     #[test]
     fn test_fuzz_bfs() {
-        let sys_graph = import_graph("./graphs/message.txt".to_string());
-        let (infected_edges, _) = sir::sir_spread(&20, &0.03, &0.4, &sys_graph.clone());
+        let (file_dir, st_node) = rwc_eval::select_dataset(&rwc_eval::Dataset::CollegeIM);
+        let sys_graph = import_graph(file_dir);
+        let (infected_edges, _) = sir::sir_spread(&20, &st_node, &0.03, &0.4, &sys_graph.clone());
         let (fwd_graph, sys_fwd_map) = vec_to_graph(&infected_edges);
         println!("Forward Graph: node {:?}, edge {:?}, mean degree: {:?}", fwd_graph.node_count(), fwd_graph.edge_count(), degree_analysis(&fwd_graph, &sys_graph));
         graph_to_dot(&fwd_graph, "./output/fwd_graph.dot".to_string());
@@ -724,13 +725,15 @@ mod tests {
 
     #[test]
     fn test_fuzz_ours() {
-        let sys_graph = import_graph("./graphs/message.txt".to_string());
-        let trace_fpr: f32 = 0.05;
+        let (file_dir, st_node) = rwc_eval::select_dataset(&rwc_eval::Dataset::CollegeIM);
+        let sys_graph = import_graph(file_dir);
+        let trace_fpr: f32 = 0.01;
 
         loop {
-            // 1.Generate a forward graph that start in node 719 (CollegeIM) by SIR algorithm
-            // The parameter of SIR is: (5%, 60%) for CollegeIM and (3%, 70%) for EUemail
-            let (infected_edges, node_src) = sir::sir_spread(&20, &0.05, &0.6, &sys_graph.clone());
+            db_clear();
+            // 1.Generate a forward graph
+            // SIR parameters are (5%, 60%) for CollegeIM and (3%, 70%) for EuEmail
+            let (infected_edges, node_src) = sir::sir_spread(&20, &st_node, &0.05, &0.6, &sys_graph.clone());
             if infected_edges.len() < 200 {
                 continue;
             }
@@ -778,6 +781,12 @@ mod tests {
             
             break;
         }
+    }
+
+    fn db_clear() {
+        db::db_nbr::clear();
+        db::db_ik::clear();
+        db::db_tag::clear();
     }
 
 }

@@ -1,4 +1,4 @@
-#![allow(dead_code)]
+#![allow(dead_code,unused_imports)]
 
 pub mod rwc_eval {
     use std::{collections::HashMap, time::{SystemTime, UNIX_EPOCH}, fs::File, io::Write, vec};
@@ -9,13 +9,27 @@ pub mod rwc_eval {
     use crate::{simulation::{sir, utils::{vec_to_graph, dedup_vec_edges}, fuzzy_traceback::{fuzzy_trace_ours, any_leaf, self, degree_analysis}}, message::messaging::{MsgReport, MsgPacket, IdKey, send_packet, Edge}, db::{db_tag, db_ik, db_nbr}, tool::{algos::tk_gen, utils::hash}};
     use crate::trace::traceback;
 
-    pub fn eval_fuzz_trace_runtime(trace_fpr: &f32, s2i: &f32, i2r: &f32, loop_index: &usize, sys_graph: &UnGraph<usize,()>,  fwd_out_dir: &String) -> Vec<f64> {
+    #[derive(Debug,PartialEq)]
+    pub(crate) enum Dataset {
+        CollegeIM,
+        EuEmail,
+    }
+
+    // Here, we set the starting node manually to ensure consistency in repeated experiments, but our code also holds for random start node.
+    pub fn select_dataset(data: &Dataset) -> (String, usize) {
+        match data {
+            Dataset::CollegeIM => ("./graphs/message.txt".to_string(), 719),
+            Dataset::EuEmail => ("./graphs/email.txt".to_string(), 719),
+        }
+    }
+
+    pub fn eval_fuzz_trace_runtime(trace_fpr: &f32, st_node: &usize, s2i: &f32, i2r: &f32, loop_index: &usize, sys_graph: &UnGraph<usize,()>,  fwd_out_dir: &String) -> Vec<f64> {
         let mut record: Vec<Vec<f64>> = Vec::new();
         // 1. init tracing keys
         let map_id_ik = sys_ik_init(&sys_graph);
         for i in 0..*loop_index{
             // 2. generate fwd and fuzz graph
-            let (_, fwd_edges, fuzz_edges_hmap) = gen_fwd_fuzz_edges(&sys_graph, trace_fpr, s2i, i2r);
+            let (_, fwd_edges, fuzz_edges_hmap) = gen_fwd_fuzz_edges(&sys_graph, st_node, trace_fpr, s2i, i2r);
             let fuzz_edges: Vec<(usize,usize)> = fuzz_edges_hmap.into_iter().map(|(k,_)| k).collect();
 
             // 2-1. graph analysis
@@ -90,10 +104,10 @@ pub mod rwc_eval {
         (snd, pkg)
     }
 
-    fn gen_fwd_fuzz_edges(sys_graph: &UnGraph<usize,()>, trace_fpr: &f32, s2i: &f32, i2r: &f32) -> (usize, Vec<(usize,usize)>, HashMap<(usize,usize),(usize,usize)>) {
+    fn gen_fwd_fuzz_edges(sys_graph: &UnGraph<usize,()>, st_node: &usize, trace_fpr: &f32, s2i: &f32, i2r: &f32) -> (usize, Vec<(usize,usize)>, HashMap<(usize,usize),(usize,usize)>) {
         loop {
             // Generate a forward graph （default is 20 rounds)
-            let (infected_edges, node_src) = sir::sir_spread(&20, s2i, i2r, &sys_graph.clone());
+            let (infected_edges, node_src) = sir::sir_spread(&20, st_node, s2i, i2r, &sys_graph.clone());
             if infected_edges.len() < 50 {
                 continue;
             }
@@ -173,7 +187,8 @@ mod tests {
 
     #[test]
     fn test_gen_fwd_fuzz_edges() {
-        let sys_graph = import_graph("./graphs/message.txt".to_string());
+        let (file_dir, st_node) = super::rwc_eval::select_dataset(&super::rwc_eval::Dataset::CollegeIM);
+        let sys_graph = import_graph(file_dir);
         // let sys_graph = import_graph("./graphs/email.txt".to_string());
         // s2i: 0.05, i2r: 0.4-0.9; s2i: 0.03-0.08, i2r: 0.7;
         // let s2i_list = vec![0.05];
@@ -188,7 +203,7 @@ mod tests {
             for i2r in &i2r_list {
                 db_clear();
                 let output_dir = format!("./output/rwc/{}", count);
-                let record = eval_fuzz_trace_runtime(&trace_fpr, &s2i, i2r, &loop_index, &sys_graph, &output_dir);
+                let record = eval_fuzz_trace_runtime(&trace_fpr, &st_node, &s2i, i2r, &loop_index, &sys_graph, &output_dir);
                 println!("\nS-I-R: {}-{}; Fwd-Fuzz: ({}:{}:{})-({}:{}:{}); Runtime: {}", s2i, i2r, record[0], record[1], record[2], record[3], record[4], record[5], record[6]);
                 count += 1;
             }
