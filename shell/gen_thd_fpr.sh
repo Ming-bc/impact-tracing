@@ -14,7 +14,7 @@ inf_detect_dir=$inf_detect_name$suffix
 fuz_fpr_dir=$fuz_fpr_name$suffix
 
 
-for ((i=1; i<=5; i++))
+for ((i=1; i<=50; i++))
     do
         cargo test test_fuzz_ours
 
@@ -22,7 +22,6 @@ for ((i=1; i<=5; i++))
         python3 raw_csv_gen.py
 
         cd ../../impact-tracing
-
         cargo test gen_graph_csv
 
         extend_thd_fpr_dir=$thd_fpr_name$ul$i$suffix
@@ -36,23 +35,16 @@ for ((i=1; i<=5; i++))
 
         extend_fuz_fpr_dir=$fuz_fpr_name$ul$i$suffix
         mv $fuz_fpr_dir $extend_fuz_fpr_dir
-
-        cd src/
     done
 
-cd ../../Traceability-Evaluation/src/draw/
+cd ../Traceability-Evaluation/src/draw/
 python3 thd_fpr.py
 python3 inf_dist.py
 python3 fuz_fpr.py
 python3 traceability_thd.py
 
-cd ../../outputs/
-cp -f inf_fpr_dist.csv trace_fpr/detect.csv
-cp -f fuz_fpr.csv privacy/priv.csv
-cp -f thd_fpr_fix_step.csv correctness/correct.csv
-
-cd ../../impact-tracing/output/
-rm -f thd_fpr_fix_step/*
-rm -f inf_dist/*
-rm -f inf_detect_dist/*
-rm -f fuz_fpr/*
+# cd ../../../impact-tracing/output/
+# rm -f thd_fpr_fix_step/*
+# rm -f inf_dist/*
+# rm -f inf_detect/*
+# rm -f fuz_fpr/*

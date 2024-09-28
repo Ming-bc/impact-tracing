@@ -698,10 +698,10 @@ mod tests {
 
     #[test]
     fn test_sir_spread() {
-        let (file_dir, st_node) = rwc_eval::select_dataset(&rwc_eval::Dataset::CollegeIM);
+        let (file_dir, st_node, s2i, i2r) = rwc_eval::select_dataset(&rwc_eval::Dataset::CollegeIM);
         let sys_graph = import_graph(file_dir);
         println!("{:?}, {:?}", sys_graph.node_count(), sys_graph.edge_count());
-        let (infected_edges, _) = sir::sir_spread(&10, &st_node, &0.04, &0.6, &sys_graph.clone());
+        let (infected_edges, _) = sir::sir_spread(&10, &st_node, &s2i, &i2r, &sys_graph.clone());
         let (fwd_graph, _) = vec_to_graph(&infected_edges);
         println!("{:?}, {:?}", fwd_graph.node_count(), fwd_graph.edge_count());
 
@@ -710,9 +710,9 @@ mod tests {
 
     #[test]
     fn test_fuzz_bfs() {
-        let (file_dir, st_node) = rwc_eval::select_dataset(&rwc_eval::Dataset::CollegeIM);
+        let (file_dir, st_node, s2i, i2r) = rwc_eval::select_dataset(&rwc_eval::Dataset::CollegeIM);
         let sys_graph = import_graph(file_dir);
-        let (infected_edges, _) = sir::sir_spread(&20, &st_node, &0.03, &0.4, &sys_graph.clone());
+        let (infected_edges, _) = sir::sir_spread(&20, &st_node, &s2i, &i2r, &sys_graph.clone());
         let (fwd_graph, sys_fwd_map) = vec_to_graph(&infected_edges);
         println!("Forward Graph: node {:?}, edge {:?}, mean degree: {:?}", fwd_graph.node_count(), fwd_graph.edge_count(), degree_analysis(&fwd_graph, &sys_graph));
         graph_to_dot(&fwd_graph, "./output/fwd_graph.dot".to_string());
@@ -725,15 +725,14 @@ mod tests {
 
     #[test]
     fn test_fuzz_ours() {
-        let (file_dir, st_node) = rwc_eval::select_dataset(&rwc_eval::Dataset::CollegeIM);
+        let (file_dir, st_node, s2i, i2r) = rwc_eval::select_dataset(&rwc_eval::Dataset::EuEmail);
         let sys_graph = import_graph(file_dir);
-        let trace_fpr: f32 = 0.01;
+        let trace_fpr: f32 = 0.0025;
 
         loop {
             db_clear();
             // 1.Generate a forward graph
-            // SIR parameters are (5%, 60%) for CollegeIM and (3%, 70%) for EuEmail
-            let (infected_edges, node_src) = sir::sir_spread(&20, &st_node, &0.05, &0.6, &sys_graph.clone());
+            let (infected_edges, node_src) = sir::sir_spread(&20, &st_node, &s2i, &i2r, &sys_graph.clone());
             if infected_edges.len() < 200 {
                 continue;
             }

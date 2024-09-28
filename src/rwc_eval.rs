@@ -13,13 +13,17 @@ pub mod rwc_eval {
     pub(crate) enum Dataset {
         CollegeIM,
         EuEmail,
+        EnronEmail,
+        Facebook,
     }
 
-    // Here, we set the starting node manually to ensure consistency in repeated experiments, but our code also holds for random start node.
-    pub fn select_dataset(data: &Dataset) -> (String, usize) {
+    // Here, we set the starting node manually to ensure consistency in repeated experiments. However, our implementation also holds for random start node.
+    pub fn select_dataset(data: &Dataset) -> (String, usize, f32, f32) {
         match data {
-            Dataset::CollegeIM => ("./graphs/message.txt".to_string(), 719),
-            Dataset::EuEmail => ("./graphs/email.txt".to_string(), 719),
+            Dataset::CollegeIM => ("./graphs/message.txt".to_string(), 719, 0.05, 0.6),
+            Dataset::EuEmail => ("./graphs/email.txt".to_string(), 1, 0.03, 0.6),
+            Dataset::EnronEmail => ("./graphs/enron.txt".to_string(), 1, 0.05, 0.6),
+            Dataset::Facebook => ("./graphs/facebook.txt".to_string(), 1, 0.03, 0.6),
         }
     }
 
@@ -187,7 +191,7 @@ mod tests {
 
     #[test]
     fn test_gen_fwd_fuzz_edges() {
-        let (file_dir, st_node) = super::rwc_eval::select_dataset(&super::rwc_eval::Dataset::CollegeIM);
+        let (file_dir, st_node, _, _) = super::rwc_eval::select_dataset(&super::rwc_eval::Dataset::CollegeIM);
         let sys_graph = import_graph(file_dir);
         // let sys_graph = import_graph("./graphs/email.txt".to_string());
         // s2i: 0.05, i2r: 0.4-0.9; s2i: 0.03-0.08, i2r: 0.7;
@@ -196,7 +200,7 @@ mod tests {
         let s2i_list = vec![0.03, 0.04, 0.05, 0.06, 0.07, 0.08];
         let i2r_list = vec![0.7];
         let trace_fpr: f32 = 0.01;
-        let loop_index = 5;
+        let loop_index = 1;
 
         let mut count = 0;
         for s2i in s2i_list {
