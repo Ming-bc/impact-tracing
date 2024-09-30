@@ -13,17 +13,13 @@ pub mod rwc_eval {
     pub(crate) enum Dataset {
         CollegeIM,
         EuEmail,
-        EnronEmail,
-        Facebook,
     }
 
     // Here, we set the starting node manually to ensure consistency in repeated experiments. However, our implementation also holds for random start node.
-    pub fn select_dataset(data: &Dataset) -> (String, usize, f32, f32) {
+    pub fn select_dataset(data: &Dataset) -> (String, usize, usize, f32, f32) {
         match data {
-            Dataset::CollegeIM => ("./graphs/message.txt".to_string(), 719, 0.05, 0.6),
-            Dataset::EuEmail => ("./graphs/email.txt".to_string(), 1, 0.03, 0.6),
-            Dataset::EnronEmail => ("./graphs/enron.txt".to_string(), 1, 0.05, 0.6),
-            Dataset::Facebook => ("./graphs/facebook.txt".to_string(), 1, 0.03, 0.6),
+            Dataset::CollegeIM => ("./graphs/message.txt".to_string(), 719, 20, 0.05, 0.6),
+            Dataset::EuEmail => ("./graphs/email.txt".to_string(), 1, 20, 0.03, 0.6),
         }
     }
 
@@ -191,7 +187,7 @@ mod tests {
 
     #[test]
     fn test_gen_fwd_fuzz_edges() {
-        let (file_dir, st_node, _, _) = super::rwc_eval::select_dataset(&super::rwc_eval::Dataset::CollegeIM);
+        let (file_dir, st_node, _, _, _) = super::rwc_eval::select_dataset(&super::rwc_eval::Dataset::CollegeIM);
         let sys_graph = import_graph(file_dir);
         // let sys_graph = import_graph("./graphs/email.txt".to_string());
         // s2i: 0.05, i2r: 0.4-0.9; s2i: 0.03-0.08, i2r: 0.7;
