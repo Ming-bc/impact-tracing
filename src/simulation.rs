@@ -685,7 +685,7 @@ mod tests {
     #[test]
     fn test_remove_replicates() {
         let dir = "./datasets/email-Eu-core-outputoral.txt";
-        let output_dir = "./python/email.txt";
+        let output_dir = ".python/email.txt";
         dedup_in_db_file(dir.to_string(), output_dir.to_string());
     }
 
@@ -740,7 +740,7 @@ mod tests {
 
             println!("Forward Graph: node {:?}, edge {:?}, mean degree: {:?}", fwd_graph.node_count(), fwd_graph.edge_count(), degree_analysis(&fwd_graph, &sys_graph));
             // graph_to_dot(&fwd_graph, "./output/fwd_graph.dot".to_string());
-            graph_to_dot(&fwd_graph, "../Traceability-Evaluation/graphs/graph_real.dot".to_string());
+            graph_to_dot(&fwd_graph, "python/graphs/graph_real.dot".to_string());
 
             // 2. Run fuzzy traceback to generate the fuzzy forward graph
             let start_node = fuzzy_traceback::any_leaf(&fwd_graph);
@@ -761,20 +761,20 @@ mod tests {
             println!("Full fuzzy Graph: node {:?}, edge {:?}", full_fuz_graph.node_count(), full_fuz_graph.edge_count());
 
             // write graph to file for k-shell comparison
-            graph_to_dot(&full_fuz_graph, "../Traceability-Evaluation/graphs/graph_fuzzy.dot".to_string());
+            graph_to_dot(&full_fuz_graph, "python/graphs/graph_fuzzy.dot".to_string());
             let sys_to_fuzz_id_map = derive_graph_id_wt_map(&full_fuz_graph);
-            write_val_to_file(&sys_to_fuzz_id_map, "../Traceability-Evaluation/inputs/id_map_fuzz.txt".to_string());
+            write_val_to_file(&sys_to_fuzz_id_map, "python/inputs/id_map_fuzz.txt".to_string());
 
             let fuzzy_graph = fuz_val_to_graph(&full_fuz_graph, &memb_val, &edge_fpr);
             graph_to_dot(&fuzzy_graph, "./output/graph_fuzzy.dot".to_string());
 
             // 3-2. generate raw data file, where one line a tuple (node_id, is_true_positive, fuzzy_val)
             memb_val.insert(start_node, 0.85);
-            gen_raw_data_file(&memb_val, &fwd_to_sys_id_map, "../Traceability-Evaluation/inputs/data_fuzzy_value.txt".to_string());
+            gen_raw_data_file(&memb_val, &fwd_to_sys_id_map, "python/inputs/data_fuzzy_value.txt".to_string());
 
             let sys_to_fwd_id_map: HashMap<usize,usize> = fwd_to_sys_id_map.iter().map(|(k,v)|
                 (v.index(), *k)).collect();
-            write_val_to_file(&sys_to_fwd_id_map, "../Traceability-Evaluation/inputs/id_map_fwd.txt".to_string());
+            write_val_to_file(&sys_to_fwd_id_map, "python/inputs/id_map_fwd.txt".to_string());
 
             graph_to_dot_for_draw(&infected_edges, &fwd_traced_edges, &sys_graph, & "./output/full_graph_for_paper.dot".to_string());
             

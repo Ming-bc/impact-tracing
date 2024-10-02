@@ -167,7 +167,7 @@ mod tests {
     fn gen_graph_csv() {
         let thd_list = vec![99.99, 99.995, 99.9995, 99.99995, 99.999995, 99.9999995, 99.99999995, 99.999999995, 100.0];
         let range_list = vec![0.0, 80.0, 90.0, 95.0, 99.0, 99.5, 99.9, 99.99, 100.0];
-        let val_list = import_csv(&"../Traceability-Evaluation/inputs/fuz_val_and_inf.csv".to_string());
+        let val_list = import_csv(&"python/inputs/fuz_val_and_inf.csv".to_string());
 
         write_val_vec_to_file(&inf_dist(&val_list), &"output/inf_dist/k_shell.txt".to_string());
         write_val_vec_to_file(&traceability(&val_list, &thd_list), &"output/thd_fpr_fix_step/thd_fpr.txt".to_string());

@@ -18,8 +18,8 @@ pub mod rwc_eval {
     // Here, we set the starting node manually to ensure consistency in repeated experiments. However, our implementation also holds for random start node.
     pub fn select_dataset(data: &Dataset) -> (String, usize, usize, f32, f32) {
         match data {
-            Dataset::CollegeIM => ("./graphs/message.txt".to_string(), 719, 20, 0.05, 0.6),
-            Dataset::EuEmail => ("./graphs/email.txt".to_string(), 1, 20, 0.03, 0.6),
+            Dataset::CollegeIM => ("./datasets/message.txt".to_string(), 719, 20, 0.05, 0.6),
+            Dataset::EuEmail => ("./datasets/email.txt".to_string(), 1, 20, 0.03, 0.6),
         }
     }
 
