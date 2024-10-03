@@ -1,4 +1,6 @@
 # Ignore everything in this directory
-*
+graphs/
+inputs/
+
 # Except this file
 !.gitignore
