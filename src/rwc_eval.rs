@@ -1,4 +1,4 @@
-#![allow(dead_code)]
+#![allow(dead_code, unused_imports)]
 
 pub mod rwc_eval {
     use std::{collections::HashMap, time::{SystemTime, UNIX_EPOCH}, fs::File, io::Write, vec};
@@ -40,12 +40,11 @@ pub mod rwc_eval {
 
             // 3. mock sends for fuzz_edges
             let message = "message".to_string() + &i.to_string();
-            let root: u32 = 719;
 
-            let (_, first_packet) = frist_pkg(&message, &root);
+            let (_, first_packet) = frist_pkg(&message, &(*st_node as u32));
             let mut rcv_keys: HashMap<u32,[u8;16]> = HashMap::new();
             let mut expl_user: Vec<u32> = Vec::new();
-            recursive_mock_send(&root, &first_packet.tag_key, &message, &mut expl_user, &fuzz_edges, &map_id_ik, &mut rcv_keys);
+            recursive_mock_send(&(*st_node as u32), &first_packet.tag_key, &message, &mut expl_user, &fuzz_edges, &map_id_ik, &mut rcv_keys);
 
             // 4. traceback
             let trace_st_node: u32 = fuzzy_traceback::any_leaf(&fwd_graph) as u32;
@@ -186,26 +185,25 @@ mod tests {
     }
 
     #[test]
-    fn test_gen_fwd_fuzz_edges() {
+    fn test_trace_time() {
         let (file_dir, st_node, _, _, _) = super::rwc_eval::select_dataset(&super::rwc_eval::Dataset::CollegeIM);
         let sys_graph = import_graph(file_dir);
-        // let sys_graph = import_graph("./graphs/email.txt".to_string());
         // s2i: 0.05, i2r: 0.4-0.9; s2i: 0.03-0.08, i2r: 0.7;
-        // let s2i_list = vec![0.05];
-        // let i2r_list = vec![0.4, 0.5, 0.6, 0.7, 0.8, 0.9];
-        let s2i_list = vec![0.03, 0.04, 0.05, 0.06, 0.07, 0.08];
-        let i2r_list = vec![0.7];
+        let s2i_list = vec![vec![0.05], vec![0.03, 0.04, 0.05, 0.06, 0.07, 0.08]];
+        let i2r_list = vec![vec![0.4, 0.5, 0.6, 0.7, 0.8, 0.9], vec![0.7]];
         let trace_fpr: f32 = 0.01;
         let loop_index = 1;
 
         let mut count = 0;
-        for s2i in s2i_list {
-            for i2r in &i2r_list {
-                db_clear();
-                let output_dir = format!("./output/rwc/{}", count);
-                let record = eval_fuzz_trace_runtime(&trace_fpr, &st_node, &s2i, i2r, &loop_index, &sys_graph, &output_dir);
-                println!("\nS-I-R: {}-{}; Fwd-Fuzz: ({}:{}:{})-({}:{}:{}); Runtime: {}", s2i, i2r, record[0], record[1], record[2], record[3], record[4], record[5], record[6]);
-                count += 1;
+        for b in 0..2 {
+            for s2i in s2i_list.get(b).unwrap() {
+                for i2r in i2r_list.get(b).unwrap() {
+                    db_clear();
+                    let output_dir = format!("./output/rwc/{}", count);
+                    let record = eval_fuzz_trace_runtime(&trace_fpr, &st_node, s2i, i2r, &loop_index, &sys_graph, &output_dir);
+                    println!("S-I-R: {}-{}; Fwd-Fuzz: ({}:{}:{})-({}:{}:{}); Runtime: {}", s2i, i2r, record[0], record[1], record[2], record[3], record[4], record[5], record[6]);
+                    count += 1;
+                }
             }
         }
         db_clear();

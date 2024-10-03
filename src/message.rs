@@ -1,4 +1,4 @@
-#![allow(dead_code)]
+#![allow(dead_code, unused_imports)]
 
 pub mod messaging {
     extern crate base64;
@@ -178,65 +178,6 @@ mod tests {
         send_packet(&encode(message), &prev_key, &tk);
     }
 
-    #[bench]
-    fn bench_send_message_e2e(b: &mut Bencher) {
-        let tk = rand::random::<[u8; 16]>();
-        let mut message = encode(rand::random::<[u8; 16]>());
-        for _i in 0..63 {
-            message.push_str(&encode(rand::random::<[u8; 16]>()));
-        }
-        let prev_key = rand::random::<[u8; 16]>();
-        let enc_pkt = send_packet(&message, &prev_key, &tk);
-
-        let sk = [1; 32];
-        let (_, public_key) = Ratchet::init_bob(sk);
-        let mut alice_ratchet = Ratchet::init_alice(sk, public_key);
-        let enc_string: String = serde_json::to_string(&enc_pkt).unwrap();
-
-        b.iter(|| test::black_box(alice_ratchet.ratchet_encrypt(&enc_string.as_bytes().to_vec(), b"none")));
-    }
-
-    #[bench]
-    fn bench_receive_message_e2e(b: &mut Bencher) {
-        let tk = rand::random::<[u8; 16]>();
-        let mut message = encode(rand::random::<[u8; 16]>());
-        for _i in 0..63 {
-            message.push_str(&encode(rand::random::<[u8; 16]>()));
-        }
-        let prev_key = rand::random::<[u8; 16]>();
-        let enc_pkt = send_packet(&message, &prev_key, &tk);
-
-        let sk = [1; 32];
-        let (mut bob_ratchet, public_key) = Ratchet::init_bob(sk);
-        let mut alice_ratchet = Ratchet::init_alice(sk, public_key);
-        let enc_string: String = serde_json::to_string(&enc_pkt).unwrap();
-
-        b.iter(|| {
-            let (header, encrypted, nonce) = alice_ratchet.ratchet_encrypt(&enc_string.as_bytes().to_vec(), b"none");
-            bob_ratchet.ratchet_decrypt(&header, &encrypted, &nonce, b"none");
-        });
-    }
-
-    #[bench]
-    fn bench_send_message(b: &mut Bencher) {
-        let tk = rand::random::<[u8; 16]>();
-        let mut message = encode(rand::random::<[u8; 16]>());
-        for _i in 0..63 {
-            message.push_str(&encode(rand::random::<[u8; 16]>()));
-        }
-        let prev_key = rand::random::<[u8; 16]>();
-        b.iter(|| send_packet(&message, &prev_key, &tk));
-    }
-
-    #[bench]
-    fn bench_receive_message(b: &mut Bencher) {
-        let message = rand::random::<[u8; 16]>();
-        let tk = rand::random::<[u8; 16]>();
-        let packet = send_packet(&encode(message),&[0;16], &tk);
-
-        b.iter(|| receive_packet(&packet));
-    }
-
     #[test]
     fn report_msg() {
         let sid: u32 = rand::random::<u32>();
@@ -276,7 +217,7 @@ mod tests {
             let et = st.elapsed();
             count += et;
         }
-        println!("Average time: {:?}", count/loop_count);
+        println!("Platform processing time: {:?}", count/loop_count);
     }
 
     #[bench]
@@ -286,5 +227,70 @@ mod tests {
         let nounce = Aes128Gcm::generate_nonce(&mut OsRng);
         let ciphertext = cipher.encrypt(&nounce, b"plaintext".as_ref()).unwrap();
         b.iter(|| cipher.decrypt(&nounce, ciphertext.as_ref()).unwrap());
+    }
+
+    #[bench]
+    fn bench_send_message(b: &mut Bencher) {
+        let tk = rand::random::<[u8; 16]>();
+        let mut message = encode(rand::random::<[u8; 16]>());
+        for _i in 0..63 {
+            message.push_str(&encode(rand::random::<[u8; 16]>()));
+        }
+        let prev_key = rand::random::<[u8; 16]>();
+        b.iter(|| send_packet(&message, &prev_key, &tk));
+    }
+
+    #[bench]
+    fn bench_receive_message(b: &mut Bencher) {
+        let message = rand::random::<[u8; 16]>();
+        let tk = rand::random::<[u8; 16]>();
+        let packet = send_packet(&encode(message),&[0;16], &tk);
+
+        b.iter(|| receive_packet(&packet));
+    }
+
+    #[bench]
+    fn bench_send_message_e2e(b: &mut Bencher) {
+        // Init messages and tracing keys
+        let tk = rand::random::<[u8; 16]>();
+        let mut message = encode(rand::random::<[u8; 16]>());
+        for _i in 0..63 {
+            message.push_str(&encode(rand::random::<[u8; 16]>()));
+        }
+        let prev_key = rand::random::<[u8; 16]>();
+        
+        // Init ratchet keys
+        let sk = [1; 32];
+        let (_, public_key) = Ratchet::init_bob(sk);
+        let mut alice_ratchet = Ratchet::init_alice(sk, public_key);
+
+        b.iter(|| {
+            let enc_pkt = send_packet(&message, &prev_key, &tk);
+            let enc_string: String = serde_json::to_string(&enc_pkt).unwrap();
+            alice_ratchet.ratchet_encrypt(&enc_string.as_bytes().to_vec(), b"none");
+        });
+    }
+
+    #[bench]
+    fn bench_receive_message_e2e(b: &mut Bencher) {
+        let tk = rand::random::<[u8; 16]>();
+        let mut message = encode(rand::random::<[u8; 16]>());
+        for _i in 0..63 {
+            message.push_str(&encode(rand::random::<[u8; 16]>()));
+        }
+        let prev_key = rand::random::<[u8; 16]>();
+        let enc_pkt = send_packet(&message, &prev_key, &tk);
+
+        let sk = [1; 32];
+        let (mut bob_ratchet, public_key) = Ratchet::init_bob(sk);
+        let mut alice_ratchet = Ratchet::init_alice(sk, public_key);
+        let enc_string: String = serde_json::to_string(&enc_pkt).unwrap();
+
+        b.iter(|| {
+            let (header, encrypted, nonce) = alice_ratchet.ratchet_encrypt(&enc_string.as_bytes().to_vec(), b"none");
+            let dec_string = bob_ratchet.ratchet_decrypt(&header, &encrypted, &nonce, b"none");
+            let dec_pkt: MsgPacket = serde_json::from_str(&String::from_utf8(dec_string).unwrap()).unwrap();
+            receive_packet(&dec_pkt);
+        });
     }
 }

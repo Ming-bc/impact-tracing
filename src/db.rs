@@ -1,4 +1,4 @@
-#![allow(dead_code)]
+#![allow(dead_code, unused_imports)]
 
 pub mod db_tag {
     extern crate redis;
@@ -208,16 +208,10 @@ pub mod tests {
     extern crate test;
 
     use base64::encode;
-    // extern crate test;
     use rand::random;
     use test::Bencher;
     use crate::db::{db_tag, db_nbr, db_ik};
     use crate::message::messaging::{Edge, IdKey};
-
-    // fn init_logger() {
-    //     //env_logger::init();
-    //     let _ = env_logger::builder().is_test(true).try_init();
-    // }
 
     #[test]
     fn redis_is_open() {
@@ -305,30 +299,18 @@ pub mod tests {
     }
 
     #[test]
-    fn bench_db_tag_exist() {
-        let bytes = random::<[u8; 6]>();
-        let data = vec![encode(bytes)];
-        assert!(db_tag::add(&data).is_ok());
-        let start = std::time::Instant::now();
-        db_tag::exists(&encode(bytes));
-        let end = std::time::Instant::now();
-        println!("db_tag exist runtime: {:?}", end - start);
-    }
-
-    #[test]
-    fn bench_db_ik_query() {
+    fn test_db_ik_query() {
         let id = random::<u32>();
         let id_key = IdKey::rand_key_gen(id);
         db_ik::add(&vec![id_key]).ok();
-    let start = std::time::Instant::now();
-        // b.iter(|| db_ik::query(&vec![id]));
+        let start = std::time::Instant::now();
         db_ik::query(&vec![id]);
-    let end = std::time::Instant::now();
-    println!("Query runtime: {:?}", end - start);
+        let end = std::time::Instant::now();
+        println!("Query runtime: {:?}", end - start);
     }
 
     #[test]
-    fn bench_bloom_filter_add() {
+    fn test_bloom_filter_add() {
         let bytes = random::<[u8; 6]>();
         let data = vec![encode(bytes)];
         let start = std::time::Instant::now();
@@ -337,18 +319,14 @@ pub mod tests {
         println!("Query runtime: {:?}", end - start);
     }
 
-    #[bench]
-    fn bench_bloom_filter_mexists(b: &mut Bencher) {
-        let mut tags: Vec<String> = Vec::new();
-        for _i in 0..1 {
-            let bytes: [u8; 32] = random::<[u8; 32]>();
-            let tag: String = encode(&bytes[..]).clone();
-            assert!(db_tag::add(&vec![encode(bytes)]).is_ok());
-            tags.push(tag);
-        }
-
-        b.iter(|| db_tag::mexists(&mut tags));
+    #[test]
+    fn test_db_tag_exist() {
+        let bytes = random::<[u8; 6]>();
+        let data = vec![encode(bytes)];
+        assert!(db_tag::add(&data).is_ok());
+        let start = std::time::Instant::now();
+        db_tag::exists(&encode(bytes));
+        let end = std::time::Instant::now();
+        println!("db_tag exist runtime: {:?}", end - start);
     }
-
-
 }
