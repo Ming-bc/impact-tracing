@@ -1,4 +1,4 @@
-#![allow(dead_code,unused_imports)]
+#![allow(dead_code)]
 
 pub mod utils {
     extern crate petgraph;
@@ -674,7 +674,7 @@ pub mod fuzzy_traceback {
 #[cfg(test)]
 mod tests {
     extern crate test;
-    use std::{collections::HashMap, fmt::write};
+    use std::collections::HashMap;
     use crate::db;
     use crate::rwc_eval::rwc_eval;
 

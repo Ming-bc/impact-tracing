@@ -1,15 +1,15 @@
-#![allow(dead_code,unused_imports)]
+#![allow(dead_code)]
 pub mod utils{
     use aes::Aes128;
     use aes_gcm::{
-        aead::{Aead, AeadCore, OsRng},
+        aead::Aead,
         Aes256Gcm, Nonce, Key // Or `Aes128Gcm`
     };
     use aes::cipher::{
         BlockEncrypt, BlockDecrypt, KeyInit,
         generic_array::GenericArray,
     };
-    use base64::{decode, encode};
+    use base64::decode;
     use sha3::{Digest, digest::{Update, ExtendableOutput, XofReader}, Sha3_256, Shake128};
     use tiny_keccak::{Kmac, Hasher};
 
@@ -192,11 +192,10 @@ pub mod algos{
 mod tests {
     extern crate test;
   
-    use crate::tool::utils::{encipher, decipher, crprf};
-    use crate::tool::algos::{self, proc_tag_gen, prf_gen};
+    use crate::tool::utils::{encipher, decipher};
+    use crate::tool::algos;
     use base64::encode;
     use test::Bencher;
-    use std::time::{SystemTime, UNIX_EPOCH, Instant};
 
     use super::utils::{self, encryption};
 

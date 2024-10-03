@@ -1,4 +1,4 @@
-#![allow(dead_code,unused_imports)]
+#![allow(dead_code, unused_imports)]
 
 mod utils {
     use std::{io::Write, fs::File};
@@ -159,7 +159,7 @@ mod traceability {
 }
 
 mod tests {
-    use super::{traceability::{correctness, find_thd_fpr, import_csv, traceability, inf_dist, privacy}, utils::write_val_vec_to_file};
+    use super::{traceability::{correctness, import_csv, traceability, inf_dist, privacy}, utils::write_val_vec_to_file};
 
     extern crate test;
 

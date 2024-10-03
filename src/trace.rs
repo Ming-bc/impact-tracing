@@ -1,4 +1,4 @@
-#![allow(dead_code,unused_imports)]
+#![allow(dead_code)]
 
 pub mod traceback {
     extern crate base64;
@@ -102,7 +102,7 @@ pub mod traceback {
                 let tk = algos::tk_gen(&map_id_ik.get(&nbr_id).unwrap(), &md.uid);
                 let prev_key = algos::prev_key(&md.key, &tk);
                 source = TraceData::new(*nbr_id, prev_key);
-                // TODO: this break may cause bug when the first user is the source.
+                // Note that this break may cause bug when the first user is the source.
                 break;
             }
         }
@@ -245,8 +245,8 @@ pub mod tests {
     use base64::encode;
     use rand;
     
-    use crate::{db::{db_tag, db_ik, db_nbr}, message::messaging::{self, IdKey}, tool::algos::{tk_gen, proc_tag_gen, tag_proc}};
-    use crate::trace::traceback::{self, TraceData};
+    use crate::{db::{db_tag, db_ik, db_nbr}, message::messaging::{self, IdKey}, tool::algos::tk_gen};
+    use crate::trace::traceback;
     use crate::message::messaging::{MsgPacket, Edge, MsgReport};
     
     const OURS_BRANCH: u32 = 10;

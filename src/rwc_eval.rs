@@ -1,4 +1,4 @@
-#![allow(dead_code,unused_imports)]
+#![allow(dead_code)]
 
 pub mod rwc_eval {
     use std::{collections::HashMap, time::{SystemTime, UNIX_EPOCH}, fs::File, io::Write, vec};
@@ -55,8 +55,8 @@ pub mod rwc_eval {
             let _ = traceback::tracing(&MsgReport {key: *trace_st_key, payload: message}, &trace_st_node);
             // convert edges to Vec<(usize,usize)>
             let t_end = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
-// assert_eq!(trace_edges.len()-1, fuzz_edges.len());
-// println!("Real {}, Trace {}", fuzz_edges.len(), trace_edges.len());
+            // assert_eq!(trace_edges.len()-1, fuzz_edges.len());
+            // println!("Real {}, Trace {}", fuzz_edges.len(), trace_edges.len());
             
             // 5. record as fwd_nodes, fwd_edges, fuzz_nodes, fuzz_edges, runtime
             record.push(vec![fwd_graph.node_count() as f64, fwd_edges.len() as f64, fwd_degree as f64,  fuzz_graph.node_count() as f64, fuzz_edges.len() as f64, fuzz_degree as f64, (t_end.as_millis() - t_start.as_millis()) as f64]);

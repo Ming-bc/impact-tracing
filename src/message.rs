@@ -1,12 +1,9 @@
-#![allow(dead_code,unused_imports)]
+#![allow(dead_code)]
 
 pub mod messaging {
     extern crate base64;
 
-    use std::default;
-
     use crate::tool::algos::*;
-    // use crate::tool:: utils::*;
     use crate::db::{db_tag, db_ik};
     use crate::tool::utils::{hash, encryption, decryption};
     use base64::encode;
@@ -152,27 +149,16 @@ pub mod messaging {
 mod tests {
     extern crate base64;
     extern crate test;
-    // use rand::random;
-
     use std::time::{Instant, Duration};
 
     use aes_gcm::{Aes128Gcm, KeyInit};
-    use base64::{encode, decode};
+    use base64::encode;
     use test::Bencher;
     use crate::db::{db_tag, db_nbr, db_ik};
     use crate::message::messaging::*;
     use crate::tool::algos::*;
-    use aes_gcm::{
-        aead::{Aead, AeadCore, OsRng},
-        Aes256Gcm, Nonce, Key // Or `Aes128Gcm`
-    };
+    use aes_gcm::aead::{Aead, AeadCore, OsRng};
     use double_ratchet_2::ratchet::Ratchet;
-    use serde;
-
-    // fn init_logger() {
-    //     //env_logger::init();
-    //     let _ = env_logger::builder().is_test(true).try_init();
-    // }
 
     #[test]
     fn snd_rcv_msg() {
@@ -229,9 +215,6 @@ mod tests {
             let (header, encrypted, nonce) = alice_ratchet.ratchet_encrypt(&enc_string.as_bytes().to_vec(), b"none");
             bob_ratchet.ratchet_decrypt(&header, &encrypted, &nonce, b"none");
         });
-        // let decrypted = bob_ratchet.ratchet_decrypt(&header, &encrypted, &nonce, b"none");
-        // let dec_string = String::from_utf8(decrypted).unwrap();
-        // assert_eq!(enc_string, dec_string);
     }
 
     #[bench]
