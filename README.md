@@ -1,4 +1,4 @@
-# Implementation of Impact Tracing
+# Impact Tracing
 
 *This repository contains the implementation and evaluation of impact tracing, a message traceback scheme for end-to-end encrypted messaging systems.*
 
