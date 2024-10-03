@@ -72,4 +72,4 @@ Run benchmark for utility and privacy:
 bash shell/gen_thd_fpr.sh
 ```
 
-The experimental results can be found in [output](python/output/).
+The experimental results can be found in [output](python/outputs/).
