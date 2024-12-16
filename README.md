@@ -2,7 +2,7 @@
 
 *This repository contains the implementation and evaluation of impact tracing, a message traceback scheme for end-to-end encrypted messaging systems.*
 
-**NDSS Submission #980:** Impact tracing: Identifying the Culprit of Misinformation for Encrypted Messaging Systems
+**NDSS 2025:** Impact tracing: Identifying the Culprit of Misinformation for Encrypted Messaging Systems [[conference](https://doi.org/10.14722/ndss.2025.240980)] [[eprint](https://eprint.iacr.org/2024/2027)] 
 
 ## Overview
 
